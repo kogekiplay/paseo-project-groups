@@ -30,14 +30,36 @@ const { createProjectIconReader, renderableIcon } = load("server/project-icon.ts
 const raster = { mimeType: "image/png", data: "aWNvbg==" };
 const uri = "data:image/png;base64,aWNvbg==";
 
+test("new icon queries refresh the daemon snapshot after a project icon changes", async () => {
+  let stored = null;
+  let snapshot = null;
+  let refreshed = 0;
+  const reader = createProjectIconReader(async () => ({
+    getLastServerInfoMessage: () => ({ serverId: "host" }),
+    listProjects: async () => { refreshed++; snapshot = stored; },
+    getProjectIcon: async () => ({ icon: snapshot }),
+    close: async () => {},
+  }));
+  try {
+    assert.equal((await reader.read({ hostId: "host", projectId: "one" })).icon, null);
+    stored = raster;
+    assert.equal((await reader.read({ hostId: "host", projectId: "one" })).icon.uri, uri);
+    assert.equal(refreshed, 2);
+  } finally {
+    await reader.close();
+  }
+});
+
 test("the icon reader shares its host connection and closes it on teardown", async () => {
   let connections = 0;
   let closed = 0;
+  let refreshed = 0;
   const ids = [];
   const reader = createProjectIconReader(async () => {
     connections++;
     return {
       getLastServerInfoMessage: () => ({ serverId: "host-a" }),
+      listProjects: async () => { refreshed++; },
       getProjectIcon: async (id) => { ids.push(id); return { icon: raster }; },
       close: async () => closed++,
     };
@@ -49,6 +71,7 @@ test("the icon reader shares its host connection and closes it on teardown", asy
   assert.equal(first.icon.uri, uri);
   assert.equal(second.icon.uri, uri);
   assert.equal(connections, 1);
+  assert.equal(refreshed, 1);
   assert.deepEqual(ids, ["one", "two"]);
   await reader.close();
   assert.equal(closed, 1);
@@ -59,6 +82,7 @@ test("another host's project ID is never queried on the local daemon", async () 
   let reads = 0;
   const reader = createProjectIconReader(async () => ({
     getLastServerInfoMessage: () => ({ serverId: "host-a" }),
+    listProjects: async () => assert.fail("another host must not refresh local projects"),
     getProjectIcon: async () => { reads++; return { icon: raster }; },
     close: async () => {},
   }));
@@ -74,6 +98,7 @@ test("a failed connection is released and a later request can reconnect", async 
     const failed = ++connections === 1;
     return {
       getLastServerInfoMessage: () => ({ serverId: "host" }),
+      listProjects: async () => {},
       getProjectIcon: async () => ({ icon: failed ? null : raster, error: failed ? "unavailable" : null }),
       close: async () => closed++,
     };
@@ -83,6 +108,46 @@ test("a failed connection is released and a later request can reconnect", async 
   assert.equal((await reader.read({ hostId: "host", projectId: "one" })).icon.uri, uri);
   assert.equal(connections, 2);
   await reader.close();
+});
+
+test("a snapshot refresh failure releases the connection and retries on the next query", async () => {
+  let connections = 0;
+  let closed = 0;
+  const reader = createProjectIconReader(async () => {
+    const failed = ++connections === 1;
+    return {
+      getLastServerInfoMessage: () => ({ serverId: "host" }),
+      listProjects: async () => { if (failed) throw new Error("Refresh unavailable"); },
+      getProjectIcon: async () => ({ icon: raster }),
+      close: async () => closed++,
+    };
+  });
+  await assert.rejects(reader.read({ hostId: "host", projectId: "one" }), /Refresh unavailable/);
+  assert.equal(closed, 1);
+  assert.equal((await reader.read({ hostId: "host", projectId: "one" })).icon.uri, uri);
+  assert.equal(connections, 2);
+  await reader.close();
+  assert.equal(closed, 2);
+});
+
+test("teardown during a snapshot refresh prevents a later icon read", async () => {
+  let finishRefresh;
+  let beginRefresh;
+  const started = new Promise((resolve) => { beginRefresh = resolve; });
+  const refreshing = new Promise((resolve) => { finishRefresh = resolve; });
+  let reads = 0;
+  const reader = createProjectIconReader(async () => ({
+    getLastServerInfoMessage: () => ({ serverId: "host" }),
+    listProjects: () => { beginRefresh(); return refreshing; },
+    getProjectIcon: async () => { reads++; return { icon: raster }; },
+    close: async () => {},
+  }));
+  const pending = reader.read({ hostId: "host", projectId: "one" });
+  await started;
+  await reader.close();
+  finishRefresh();
+  assert.equal((await pending).icon, null);
+  assert.equal(reads, 0);
 });
 
 test("missing images and unsupported or unsafe SVGs keep the folder fallback", () => {

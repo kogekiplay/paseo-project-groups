@@ -8,6 +8,7 @@ export interface IconDaemon {
   connect(): Promise<void>;
   close(): Promise<void>;
   getLastServerInfoMessage(): { serverId: string } | null;
+  listProjects(): Promise<unknown>;
   getProjectIcon(projectId: string): Promise<{
     icon: { mimeType: string; data: string } | null;
     error?: string | null;
@@ -67,6 +68,7 @@ export function renderableIcon(icon: { mimeType: string; data: string } | null):
 export function createProjectIconReader(connect = connectIconDaemon) {
   let connection: Promise<IconDaemon> | null = null;
   let stopped = false;
+  const refreshes = new WeakMap<IconDaemon, Promise<unknown>>();
   const drop = async (pending: Promise<IconDaemon>) => {
     if (connection === pending) connection = null;
     await pending.then((daemon) => daemon.close()).catch(() => {});
@@ -81,6 +83,15 @@ export function createProjectIconReader(connect = connectIconDaemon) {
           pending.then(async (daemon) => {
             // Never interpret another host's project ID on this daemon.
             if (stopped || daemon.getLastServerInfoMessage()?.serverId !== hostId) return null;
+            // Icon bytes belong to the daemon session's last project snapshot.
+            // Coalesce concurrent rows, then refresh again for a new icon query.
+            let refresh = refreshes.get(daemon);
+            if (!refresh) {
+              refresh = daemon.listProjects().finally(() => refreshes.delete(daemon));
+              refreshes.set(daemon, refresh);
+            }
+            await refresh;
+            if (stopped) return null;
             const result = await daemon.getProjectIcon(projectId);
             if (result.error) throw new Error(result.error);
             return renderableIcon(result.icon);
