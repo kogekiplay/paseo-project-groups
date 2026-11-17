@@ -36,6 +36,7 @@ import { DragProvider, useDragController } from "./drag";
 import type { Hit } from "./hit";
 import { useT } from "./i18n";
 import { DEFAULT_APPEARANCE, LookContext, lookFrom, useLook, useViewActions } from "./look";
+import { ProjectIcon } from "./project-icon";
 import {
   addGroup,
   moveGroup,
@@ -110,7 +111,12 @@ function DropIndicator({ hit, theme }: { hit: Hit; theme: Theme }) {
   );
 }
 
-function Ghost({ subject, y, theme }: { subject: DragSubject; y: Animated.Value; theme: Theme }) {
+function Ghost({ subject, reference, y, theme }: {
+  subject: DragSubject;
+  reference?: ProjectRef;
+  y: Animated.Value;
+  theme: Theme;
+}) {
   const look = useLook();
   const decoration = useDecorations().get(
     subject.kind === "group" ? "groups" : "projects",
@@ -142,12 +148,21 @@ function Ghost({ subject, y, theme }: { subject: DragSubject; y: Animated.Value;
         transform: [{ translateY: y }],
       }}
     >
-      <DecorIcon
-        icon={decoration.icon}
-        fallback={subject.kind === "group" ? "Layers" : "Folder"}
-        color={decoration.color ?? theme.colors.foregroundMuted}
-        size={look.icon}
-      />
+      {reference ? (
+        <ProjectIcon
+          reference={reference}
+          icon={decoration.icon}
+          color={decoration.color ?? theme.colors.foregroundMuted}
+          size={look.icon}
+        />
+      ) : (
+        <DecorIcon
+          icon={decoration.icon}
+          fallback={subject.kind === "group" ? "Layers" : "Folder"}
+          color={decoration.color ?? theme.colors.foregroundMuted}
+          size={look.icon}
+        />
+      )}
       <Text
         numberOfLines={1}
         style={{
@@ -601,7 +616,14 @@ function GroupsList(view: PluginSidebarViewProps) {
 
               {drag.hit ? <DropIndicator hit={drag.hit} theme={view.theme} /> : null}
             </ScrollView>
-            {drag.subject ? <Ghost subject={drag.subject} y={drag.ghostY} theme={view.theme} /> : null}
+            {drag.subject ? (
+              <Ghost
+                subject={drag.subject}
+                reference={drag.subject.kind === "project" ? byKey.get(drag.subject.key) : undefined}
+                y={drag.ghostY}
+                theme={view.theme}
+              />
+            ) : null}
           </View>
         </View>
 

@@ -28,6 +28,8 @@ Click a project's folder icon or a group's palette button. Pick one of 11 colors
 
 Colors and icons only show in this view. Paseo's own project icons don't change.
 
+Projects use their existing Paseo icon by default. Choosing an icon or emoji here overrides it; resetting the icon restores the project's own image. When an image is unavailable, a folder icon is shown. Project images are read from the daemon running this plugin. PNG, JPEG, GIF, WebP and self-contained SVGs supported by Paseo's plugin renderer can be displayed.
+
 ## Settings
 
 The sliders button next to New group opens the plugin's settings. You can change:
@@ -44,7 +46,7 @@ Settings are saved per device, so your phone and your computer can look differen
 
 ## What it stores
 
-Groups, their order, colors and icons are saved in the plugin's settings on the daemon. Every app connected to that daemon sees the same groups. Which groups are folded is saved per device. The plugin makes no network requests.
+Groups, their order, colors and icons are saved in the plugin's settings on the daemon. Every app connected to that daemon sees the same groups. Which groups are folded is saved per device. To read project images, the plugin connects locally to its own daemon using Paseo's installed modules. It contacts no external service. If those modules are unavailable, projects keep the folder fallback.
 
 Removing a project runs `paseo project delete` on the daemon's machine, because the plugin API has no call for it. Paseo archives the project's workspaces and leaves the project folder on disk. Worktrees that Paseo created for those workspaces can be deleted when they are archived. The confirm dialog tells you this before anything happens.
 

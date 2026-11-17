@@ -13,6 +13,7 @@ import { useDrag, useDragHandle, useDragSlot } from "./drag";
 import { DecorIcon, useDecorations } from "./decor";
 import { useT } from "./i18n";
 import { useLook, type Look } from "./look";
+import { ProjectIcon } from "./project-icon";
 import type { ProjectGroup } from "../shared/settings";
 
 type Theme = PluginSidebarViewProps["theme"];
@@ -563,9 +564,9 @@ export function ProjectBlock({
               onPress={decorate}
               onHoverIn={hover.onHoverIn}
             >
-              <DecorIcon
+              <ProjectIcon
+                reference={reference}
                 icon={decoration.icon}
-                fallback="Folder"
                 color={decoration.color ?? muted}
                 size={look.icon}
               />

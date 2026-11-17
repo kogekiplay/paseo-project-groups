@@ -45,6 +45,7 @@ function loadClient(file, host = {}) {
     },
     "./i18n": { useT: () => (key) => key },
     "./model": {},
+    "./project-icon": { ProjectIcon: "ProjectIcon" },
     "./look": { useLook: () => ({ icon: 13, text: 12, line: 16, small: 11 }) },
     "./drag": {
       useDrag: () => ({ recentlyDropped: () => false }),

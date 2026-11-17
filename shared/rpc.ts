@@ -10,3 +10,17 @@ export const removeProjectRpc = defineRpc({
   input: z.object({ projectId: z.string().min(1) }),
   output: z.object({ removedWorkspaceIds: z.array(z.string()) }),
 });
+
+/** Paseo's uploaded or discovered icon. SVGs use the host renderer on native clients too. */
+export const projectIconSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("image"), uri: z.string() }),
+  z.object({ kind: z.literal("svg"), svg: z.string() }),
+]);
+
+export type ProjectIcon = z.infer<typeof projectIconSchema>;
+
+export const projectIconRpc = defineRpc({
+  name: "project.icon",
+  input: z.object({ hostId: z.string().min(1), projectId: z.string().min(1) }),
+  output: z.object({ icon: projectIconSchema.nullable() }),
+});
