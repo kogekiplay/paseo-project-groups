@@ -8,7 +8,7 @@ import {
 } from "@getpaseo/plugin/client";
 import { Icon } from "@getpaseo/plugin/client/ui";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
-import { Pressable, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Pressable, Text, TextInput, View } from "react-native";
 import { useDrag, useDragHandle, useDragSlot } from "./drag";
 import { DecorIcon, useDecorations } from "./decor";
 import { useT } from "./i18n";
@@ -387,6 +387,27 @@ const INDICATOR_COLOR = {
   attention: "statusSuccess",
 } as const;
 
+/** The native spinner animates without re-rendering the workspace row on every frame. */
+export function StatusDot({ color, running = false }: { color: string; running?: boolean }) {
+  return (
+    <View
+      pointerEvents="none"
+      style={{ width: 12, height: 12, flexShrink: 0, alignItems: "center", justifyContent: "center" }}
+    >
+      {running ? (
+        <ActivityIndicator
+          accessible={false}
+          color={color}
+          size="small"
+          style={{ transform: [{ scale: 0.6 }] }}
+        />
+      ) : (
+        <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: color }} />
+      )}
+    </View>
+  );
+}
+
 export function WorkspaceRow({
   reference,
   indent,
@@ -415,11 +436,6 @@ export function WorkspaceRow({
   const active = view.active.workspace?.key === reference.key;
   const tone = workspace.indicator === "done" ? null : INDICATOR_COLOR[workspace.indicator];
   const color = tone ? view.theme.colors[tone] : "transparent";
-  // Running is a ring so it stays distinct from "finished" when the theme's accent is green.
-  const dot =
-    workspace.indicator === "running"
-      ? { width: 7, height: 7, borderRadius: 4, borderWidth: 1.5, borderColor: color }
-      : { width: 6, height: 6, borderRadius: 3, backgroundColor: color };
   const diff =
     look.showDiffStats && (workspace.additions || workspace.deletions) ? (
       <Text selectable={false} numberOfLines={1} style={styles.detail}>
@@ -440,7 +456,7 @@ export function WorkspaceRow({
       onHoverOut={hover.onHoverOut}
       style={[styles.row, styles.rounded, { paddingLeft: indent }, active ? styles.selected : null]}
     >
-      {look.showStatusDots ? <View style={dot} /> : null}
+      {look.showStatusDots ? <StatusDot color={color} running={workspace.indicator === "running"} /> : null}
       <Text
         selectable={false}
         numberOfLines={1}

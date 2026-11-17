@@ -20,23 +20,19 @@ import {
 } from "../shared/settings";
 import { useT } from "./i18n";
 import { DEFAULT_APPEARANCE, lookFrom } from "./look";
-import { rowStyles } from "./rows";
+import { rowStyles, StatusDot } from "./rows";
 
 /** Each language is named in its own language so it can be found from either one. */
 const LANGUAGE_NAMES = { en: "English", ko: "한국어" } as const;
 
-/** A static sample of the sidebar drawn with the chosen values. */
+/** A sample of the sidebar drawn with the chosen values. */
 function Preview({ values, theme }: { values: AppearanceValues; theme: PluginSurfaceProps["theme"] }) {
   const t = useT();
   const look = useMemo(() => lookFrom(values), [values]);
   const styles = useMemo(() => rowStyles(theme, look), [theme, look]);
   const muted = theme.colors.foregroundMuted;
-  const dot = (color: string, ring = false) =>
-    !look.showStatusDots ? null : ring ? (
-      <View style={{ width: 7, height: 7, borderRadius: 4, borderWidth: 1.5, borderColor: color }} />
-    ) : (
-      <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: color }} />
-    );
+  const dot = (color: string, running = false) =>
+    look.showStatusDots ? <StatusDot color={color} running={running} /> : null;
   return (
     <View
       style={{
