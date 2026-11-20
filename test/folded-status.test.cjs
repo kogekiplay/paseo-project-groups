@@ -52,12 +52,63 @@ test("mostUrgent follows Paseo's order and ignores unknown values", () => {
   assert.equal(model.mostUrgent(["something-new", "attention"]), "attention");
 });
 
+test("a later running indicator joins the current rotation and the last one stops it", () => {
+  let starts = 0;
+  let stops = 0;
+  const { RunningSpinner } = load("running-spinner.tsx", {
+    react: React,
+    "react/jsx-runtime": require("react/jsx-runtime"),
+    "react-native": {
+      View: "View",
+      Easing: { linear: (value) => value },
+      Platform: { OS: "web" },
+      Animated: {
+        View: "AnimatedView",
+        Value: class {
+          interpolate() { return { progress: this }; }
+          setValue() {}
+        },
+        timing: (value) => ({ value }),
+        loop: () => ({ start() { starts++; }, stop() { stops++; } }),
+      },
+    },
+  });
+  const list = (ids) => ids.map((id) => React.createElement(RunningSpinner, {
+    key: id,
+    size: id === "badge" ? 10 : 12,
+    color: theme.colors.accent,
+  }));
+  let renderer;
+  act(() => { renderer = create(list(["row"])); });
+  try {
+    const currentRotation = () => renderer.root.findAllByType("AnimatedView")
+      .map((node) => node.props.style.transform[0].rotate);
+    const [initialRotation] = currentRotation();
+    act(() => renderer.update(list(["row", "badge"])));
+    const rotations = currentRotation();
+    assert.equal(rotations.length, 2);
+    assert.equal(rotations[0], initialRotation);
+    assert.equal(rotations[1], initialRotation);
+    assert.equal(starts, 1);
+
+    act(() => renderer.update(list(["badge"])));
+    assert.equal(stops, 0);
+    act(() => renderer.update(list([])));
+    assert.equal(stops, 1);
+    act(() => renderer.update(list(["row"])));
+    assert.equal(starts, 2);
+  } finally {
+    act(() => renderer.unmount());
+  }
+  assert.equal(stops, 2);
+});
+
 function render(name, props, { showFoldedStatus, statuses, workspaces = [] }) {
   const queries = [];
   const rows = load("rows.tsx", {
     react: React,
     "react/jsx-runtime": require("react/jsx-runtime"),
-    "react-native": { View: "View", Text: "Text", Pressable: "Pressable", ActivityIndicator: "Spinner" },
+    "react-native": { View: "View", Text: "Text", Pressable: "Pressable" },
     "@getpaseo/plugin/client": {
       useProject: (_ref, selector) => selector({ displayName: "Project" }),
       useWorkspaces: (query) => {
@@ -70,6 +121,7 @@ function render(name, props, { showFoldedStatus, statuses, workspaces = [] }) {
     "./i18n": { useT: () => (key) => key },
     "./model": model,
     "./project-icon": { ProjectIcon: "ProjectIcon" },
+    "./running-spinner": { RunningSpinner: "RunningSpinner" },
     "./labels": { LabelChip: "LabelChip", labelKey: (name) => name.toLowerCase(), useLabelCatalog: () => ({ labels: null, refresh() {} }) },
     "./look": { useLook: () => ({ icon: 13, showFoldedStatus, showPinned: true }) },
     "./drag": {

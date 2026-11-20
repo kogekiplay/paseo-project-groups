@@ -249,6 +249,7 @@ test("project rows honor the icon visibility setting and keep overrides visible"
     "@getpaseo/plugin/client/ui": { Icon: "Icon" },
     "react-native": { View: "View", Text: "Text", Pressable: "Pressable" },
     "./project-icon": { ProjectIcon: "ProjectIcon" },
+    "./running-spinner": { RunningSpinner: "RunningSpinner" },
     "./labels": { LabelChip: "LabelChip", labelKey: (name) => name.toLowerCase(), useLabelCatalog: () => ({ labels: null, refresh() {} }) },
     "./model": { mostUrgent: () => "done", compareWorkspaceTimes: () => () => 0, compactTimeAgo: () => "" },
     "./i18n": { useT: () => key => key },

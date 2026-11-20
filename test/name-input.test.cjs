@@ -46,6 +46,7 @@ function loadClient(file, host = {}) {
     "./i18n": { useT: () => (key) => key },
     "./model": { mostUrgent: () => "done", compareWorkspaceTimes: () => () => 0, compactTimeAgo: () => "" },
     "./project-icon": { ProjectIcon: "ProjectIcon" },
+    "./running-spinner": { RunningSpinner: "RunningSpinner" },
     "./labels": { LabelChip: "LabelChip", labelKey: (name) => name.toLowerCase(), useLabelCatalog: () => ({ labels: null, refresh() {} }) },
     "./look": { useLook: () => ({ icon: 13, text: 12, line: 16, small: 11 }) },
     "../shared/rpc": { markWorkspaceRpc: {} },

@@ -9,7 +9,7 @@ import {
 } from "@getpaseo/plugin/client";
 import { Icon, TextInput } from "@getpaseo/plugin/client/ui";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ActivityIndicator, Pressable, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { useDrag, useDragHandle, useDragSlot } from "./drag";
 import { DecorIcon, useDecorations } from "./decor";
 import { useT } from "./i18n";
@@ -17,6 +17,7 @@ import { useLook, type Look } from "./look";
 import { LabelChip, labelKey, useLabelCatalog } from "./labels";
 import { compactTimeAgo, compareWorkspaceTimes, mostUrgent } from "./model";
 import { ProjectIcon } from "./project-icon";
+import { RunningSpinner } from "./running-spinner";
 import type { ProjectGroup } from "../shared/settings";
 
 type Theme = PluginSidebarViewProps["theme"];
@@ -462,7 +463,6 @@ const INDICATOR_COLOR = {
   attention: "statusSuccess",
 } as const;
 
-/** The native spinner animates without re-rendering the workspace row on every frame. */
 export function StatusDot({ color, running = false }: { color: string; running?: boolean }) {
   return (
     <View
@@ -470,12 +470,7 @@ export function StatusDot({ color, running = false }: { color: string; running?:
       style={{ width: 12, height: 12, flexShrink: 0, alignItems: "center", justifyContent: "center" }}
     >
       {running ? (
-        <ActivityIndicator
-          accessible={false}
-          color={color}
-          size="small"
-          style={{ transform: [{ scale: 0.6 }] }}
-        />
+        <RunningSpinner color={color} size={12} />
       ) : (
         <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: color }} />
       )}
@@ -562,12 +557,7 @@ function StatusBadge({
       }}
     >
       {status === "running" ? (
-        <ActivityIndicator
-          accessible={false}
-          color={color}
-          size="small"
-          style={{ transform: [{ scale: 0.5 }] }}
-        />
+        <RunningSpinner color={color} size={10} />
       ) : status === "needs_input" ? (
         <Icon name="CircleAlert" size={11} color={color} />
       ) : (
