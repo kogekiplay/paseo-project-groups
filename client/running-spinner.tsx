@@ -1,12 +1,14 @@
-import { useEffect } from "react";
-import { Animated, Easing, Platform, View } from "react-native";
+import { useEffect, useLayoutEffect, useRef } from "react";
+import { Animated, Easing, Platform, View, type ViewStyle } from "react-native";
+import { animateSpinnerOnWeb } from "./web";
 
+const duration = 800;
 const progress = new Animated.Value(0);
 const rotation = progress.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "360deg"] });
 let spinnerCount = 0;
 let animation: Animated.CompositeAnimation | null = null;
 
-export function RunningSpinner({ color, size }: { color: string; size: number }) {
+function NativeSpinnerArc({ style }: { style: ViewStyle }) {
   useEffect(() => {
     spinnerCount += 1;
     if (spinnerCount === 1) {
@@ -14,10 +16,10 @@ export function RunningSpinner({ color, size }: { color: string; size: number })
       animation = Animated.loop(
         Animated.timing(progress, {
           toValue: 1,
-          duration: 800,
+          duration,
           easing: Easing.linear,
           isInteraction: false,
-          useNativeDriver: Platform.OS !== "web",
+          useNativeDriver: true,
         }),
       );
       animation.start();
@@ -31,13 +33,23 @@ export function RunningSpinner({ color, size }: { color: string; size: number })
     };
   }, []);
 
+  return <Animated.View style={[style, { transform: [{ rotate: rotation }] }]} />;
+}
+
+function WebSpinnerArc({ style }: { style: ViewStyle }) {
+  const ref = useRef<View>(null);
+  useLayoutEffect(() => animateSpinnerOnWeb(ref.current, duration), []);
+  return <View ref={ref} style={style} />;
+}
+
+const SpinnerArc = Platform.OS === "web" ? WebSpinnerArc : NativeSpinnerArc;
+
+export function RunningSpinner({ color, size }: { color: string; size: number }) {
   const ring = { width: size, height: size, borderRadius: size / 2, borderWidth: size / 8 };
   return (
     <View accessible={false} pointerEvents="none" style={{ width: size, height: size }}>
       <View style={{ ...ring, position: "absolute", borderColor: color, opacity: 0.2 }} />
-      <Animated.View
-        style={{ ...ring, borderColor: "transparent", borderTopColor: color, transform: [{ rotate: rotation }] }}
-      />
+      <SpinnerArc style={{ ...ring, borderColor: "transparent", borderTopColor: color }} />
     </View>
   );
 }

@@ -61,7 +61,7 @@ test("a later running indicator joins the current rotation and the last one stop
     "react-native": {
       View: "View",
       Easing: { linear: (value) => value },
-      Platform: { OS: "web" },
+      Platform: { OS: "ios" },
       Animated: {
         View: "AnimatedView",
         Value: class {
@@ -72,6 +72,7 @@ test("a later running indicator joins the current rotation and the last one stop
         loop: () => ({ start() { starts++; }, stop() { stops++; } }),
       },
     },
+    "./web": { animateSpinnerOnWeb: () => assert.fail("Native rings should not use browser animations") },
   });
   const list = (ids) => ids.map((id) => React.createElement(RunningSpinner, {
     key: id,
@@ -82,7 +83,7 @@ test("a later running indicator joins the current rotation and the last one stop
   act(() => { renderer = create(list(["row"])); });
   try {
     const currentRotation = () => renderer.root.findAllByType("AnimatedView")
-      .map((node) => node.props.style.transform[0].rotate);
+      .map((node) => node.props.style[1].transform[0].rotate);
     const [initialRotation] = currentRotation();
     act(() => renderer.update(list(["row", "badge"])));
     const rotations = currentRotation();
@@ -101,6 +102,57 @@ test("a later running indicator joins the current rotation and the last one stop
     act(() => renderer.unmount());
   }
   assert.equal(stops, 2);
+});
+
+test("web rings share the document timeline without starting the native loop", () => {
+  const platform = { OS: "web" };
+  const web = load("web.ts", { "react-native": { Platform: platform } });
+  const { RunningSpinner } = load("running-spinner.tsx", {
+    react: React,
+    "react/jsx-runtime": require("react/jsx-runtime"),
+    "react-native": {
+      View: "View",
+      Platform: platform,
+      Animated: {
+        Value: class { interpolate() {} },
+        loop: () => assert.fail("Web rings should not start an Animated loop"),
+      },
+    },
+    "./web": web,
+  });
+  const animations = [];
+  const createNodeMock = () => ({
+    animate(_keyframes, options) {
+      const animation = {
+        startTime: null,
+        duration: options.duration,
+        cancelled: false,
+        cancel() { this.cancelled = true; },
+      };
+      animations.push(animation);
+      return animation;
+    },
+  });
+  const list = (ids) => ids.map((id) => React.createElement(RunningSpinner, {
+    key: id,
+    size: 12,
+    color: theme.colors.accent,
+  }));
+  let renderer;
+  act(() => { renderer = create(list(["first"]), { createNodeMock }); });
+  try {
+    act(() => renderer.update(list(["first", "later"])));
+    assert.equal(animations.length, 2);
+    assert.equal(animations[0].startTime, 0);
+    assert.equal(animations[1].startTime, animations[0].startTime);
+    assert.equal(animations[1].duration, animations[0].duration);
+    act(() => renderer.update(list(["later"])));
+    assert.equal(animations[0].cancelled, true);
+    assert.equal(animations[1].cancelled, false);
+  } finally {
+    act(() => renderer.unmount());
+  }
+  assert.equal(animations[1].cancelled, true);
 });
 
 function render(name, props, { showFoldedStatus, statuses, workspaces = [] }) {
