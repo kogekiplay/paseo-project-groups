@@ -504,3 +504,61 @@ test("compact ages match the app's", () => {
   assert.equal(ago(3 * 86_400_000), "3d");
   assert.equal(model.compactTimeAgo("not a date", now), "");
 });
+
+test("workspace title drops vertical flex and keeps status dot and running ring centered across text sizes", () => {
+  const flatten = (style) => (Array.isArray(style) ? Object.assign({}, ...style.map(flatten)) : (style ?? {}));
+  const lookModule = load("look.tsx", {
+    react: React,
+    "../shared/settings": {
+      appearanceDocument: { schema: { parse: () => ({ textSize: 12, density: "comfortable", indent: "normal", groupSpacing: "small", boldGroupNames: true, showProjectIcons: true, showHostTags: true, showStatusDots: true, showFoldedStatus: true, showDiffStats: true, showBranch: false, showLabels: true, showPinned: true, workspaceSort: "name", workspaceTitle: "title", showBackground: false, language: "auto" }) } },
+    },
+  });
+  for (const textSize of [11, 12, 15]) {
+    const look = lookModule.lookFrom({
+      textSize, density: "comfortable", indent: "normal", groupSpacing: "small",
+      boldGroupNames: true, showProjectIcons: true, showHostTags: true, showStatusDots: true,
+      showFoldedStatus: true, showDiffStats: true, showBranch: false, showLabels: true,
+      showPinned: true, workspaceSort: "name", workspaceTitle: "title", showBackground: false, language: "auto",
+    });
+    for (const indicator of ["running", "attention"]) {
+      const rows = load("rows.tsx", {
+        react: React,
+        "react/jsx-runtime": require("react/jsx-runtime"),
+        "react-native": { View: "View", Text: "Text", Pressable: "Pressable" },
+        "@getpaseo/plugin/client": {
+          useWorkspace: (_ref, selector) => selector({
+            title: "Codeg 内存修复", name: "Codeg 内存修复", branch: null, indicator,
+            indicatorLabel: null, diffStat: null, labels: [], statusEnteredAt: null,
+          }),
+        },
+        "@getpaseo/plugin/client/ui": { Icon: "Icon", TextInput: "Input" },
+        "./i18n": { useT: () => (key) => key },
+        "./model": model,
+        "./project-icon": { ProjectIcon: "ProjectIcon" },
+        "./running-spinner": { RunningSpinner: "RunningSpinner" },
+        "./labels": { LabelChip: "LabelChip", labelKey: (name) => name.toLowerCase(), useLabelCatalog: () => ({ labels: null, refresh() {} }) },
+        "./look": { useLook: () => look },
+        "./drag": { useDrag: () => ({ recentlyDropped: () => false }), useDragSlot: () => null, useDragHandle: () => ({}) },
+        "./decor": { DecorIcon: "DecorIcon", useDecorations: () => ({ get: () => ({ color: null, icon: null }) }) },
+      });
+      let renderer;
+      act(() => {
+        renderer = create(React.createElement(rows.WorkspaceRow, {
+          reference: { key: "h:w1", id: "w1", hostId: "h" },
+          indent: 36,
+          view: { theme, layout: { compact: true, platform: "ios" }, active: { workspace: null }, navigation: { openWorkspace: noop } },
+          onMenu: noop,
+        }));
+      });
+      const titleNode = renderer.root.find((n) => n.type === "Text" && n.props.children === "Codeg 内存修复");
+      const titleStyle = flatten(titleNode.props.style);
+      assert.equal(titleStyle.flex, undefined, `title at ${textSize}pt must not set vertical flex inside column View`);
+      assert.equal(titleStyle.lineHeight, look.line);
+      const dotSlot = renderer.root.find((n) =>
+        n.type === "View" && n.props.pointerEvents === "none" && n.props.style?.width === 12 && n.props.style?.height === 12,
+      );
+      assert.equal(dotSlot.props.style.transform, undefined, "running ring and static dot share centered slot with no fixed translateY");
+      act(() => renderer.unmount());
+    }
+  }
+});
