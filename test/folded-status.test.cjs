@@ -537,6 +537,7 @@ test("workspace title drops vertical flex and keeps status dot and running ring 
         "./model": model,
         "./project-icon": { ProjectIcon: "ProjectIcon" },
         "./running-spinner": { RunningSpinner: "RunningSpinner" },
+        "./web": { sidebarNavProps: () => ({}) },
         "./labels": { LabelChip: "LabelChip", labelKey: (name) => name.toLowerCase(), useLabelCatalog: () => ({ labels: null, refresh() {} }) },
         "./look": { useLook: () => look },
         "./drag": { useDrag: () => ({ recentlyDropped: () => false }), useDragSlot: () => null, useDragHandle: () => ({}) },
