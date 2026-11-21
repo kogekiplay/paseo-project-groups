@@ -564,48 +564,143 @@ test("jumping to a parent or sibling inside a collapsed group and project unfold
   assert.ok(harness.scrollCalls.length >= 1, "jumping reveals the target row in the scroll view");
 });
 
-test("same workspace with multiple agents renders separate indented AgentRows with independent active selection", (t) => {
-  const p1 = ref("project", "host-a", "monorepo");
-  const w1 = ref("workspace", "host-a", "ws-shared");
-  const aParent = ref("agent", "host-a", "ag-parent");
-  const aChild = ref("agent", "host-a", "ag-child");
-  const aOther = ref("agent", "host-a", "ag-other");
+test("same-workspace subagent tabs are hidden from both views, counts, quick-jump, rail, and keyboard nav", (t) => {
+  const pGroups = ref("project", "host-a", "paseo-project-groups");
+  const pCross = ref("project", "host-b", "cross-project");
+  const wMain = ref("workspace", "host-a", "ws-1");
+  // Same opaque workspace ID ("ws-1") on a different host must stay distinct!
+  const wOtherHost = ref("workspace", "host-b", "ws-1");
+
+  const aRoot = ref("agent", "host-a", "ag-root");
+  const aTabChild = ref("agent", "host-a", "ag-tab-child");
+  const aTabGrandchild = ref("agent", "host-a", "ag-tab-grandchild");
+  const aCrossHostChild = ref("agent", "host-b", "ag-cross-host-child");
 
   const harness = makeHarness({
-    projects: [{ ref: p1, hostId: "host-a", displayName: "monorepo", iconRevision: null }],
-    workspaces: [{
-      ref: w1, hostId: "host-a", project: p1, pinnedAt: null, labels: [], background: false,
-      branch: "main", createdAt: "2026-01-01T00:00:00Z", lastPromptAt: null, parentAgent: null,
-      indicator: "running", indicatorLabel: null, id: "ws-shared", projectId: "monorepo",
-      projectDisplayName: "monorepo", name: "Shared Workspace", title: "Shared Workspace",
-      status: "running", statusEnteredAt: null, archivingAt: null, diffStat: null,
-    }],
-    agents: [
-      { ref: aParent, hostId: "host-a", workspace: w1, parentAgent: null, id: "ag-parent", workspaceId: "ws-shared", status: "idle", background: false, createdAt: "2026-01-01T00:00:00Z", title: "Coordinator", requiresAttention: false },
-      { ref: aChild, hostId: "host-a", workspace: w1, parentAgent: aParent, id: "ag-child", workspaceId: "ws-shared", status: "running", background: false, createdAt: "2026-01-02T00:00:00Z", title: "Worker A", requiresAttention: false },
-      { ref: aOther, hostId: "host-a", workspace: w1, parentAgent: null, id: "ag-other", workspaceId: "ws-shared", status: "idle", background: false, createdAt: "2026-01-03T00:00:00Z", title: "Unrelated Helper", requiresAttention: false },
+    projects: [
+      { ref: pGroups, hostId: "host-a", displayName: "paseo-project-groups", iconRevision: null },
+      { ref: pCross, hostId: "host-b", displayName: "cross-project", iconRevision: null },
     ],
-    groups: [{ id: "g1", name: "Work", projects: [p1.key] }],
-    activeAgent: aChild,
-    activeWorkspace: w1,
+    workspaces: [
+      {
+        ref: wMain, hostId: "host-a", project: pGroups, pinnedAt: null, labels: [], background: false,
+        branch: "main", createdAt: "2026-01-01T00:00:00Z", lastPromptAt: null, parentAgent: null,
+        indicator: "done", indicatorLabel: null, id: "ws-1", projectId: "paseo-project-groups",
+        projectDisplayName: "paseo-project-groups", name: "项目分组插件", title: "项目分组插件",
+        status: "done", statusEnteredAt: null, archivingAt: null, diffStat: { additions: 961, deletions: 63 },
+      },
+      {
+        ref: wOtherHost, hostId: "host-b", project: pCross, pinnedAt: null, labels: [], background: false,
+        branch: "main", createdAt: "2026-01-02T00:00:00Z", lastPromptAt: null, parentAgent: aRoot,
+        indicator: "running", indicatorLabel: "运行中", id: "ws-1", projectId: "cross-project",
+        projectDisplayName: "cross-project", name: "远端跨工作区子 Agent", title: "远端跨工作区子 Agent",
+        status: "running", statusEnteredAt: null, archivingAt: null, diffStat: null,
+      },
+    ],
+    agents: [
+      { ref: aRoot, hostId: "host-a", workspace: wMain, parentAgent: null, id: "ag-root", workspaceId: "ws-1", status: "idle", background: false, createdAt: "2026-01-01T00:00:00Z", title: "项目分组插件", requiresAttention: false },
+      { ref: aTabChild, hostId: "host-a", workspace: wMain, parentAgent: aRoot, id: "ag-tab-child", workspaceId: "ws-1", status: "running", background: false, createdAt: "2026-01-02T00:00:00Z", title: "同窗口子标签", requiresAttention: false },
+      { ref: aTabGrandchild, hostId: "host-a", workspace: wMain, parentAgent: aTabChild, id: "ag-tab-grandchild", workspaceId: "ws-1", status: "idle", background: false, createdAt: "2026-01-03T00:00:00Z", title: "同窗口孙标签", requiresAttention: false },
+      { ref: aCrossHostChild, hostId: "host-b", workspace: wOtherHost, parentAgent: aRoot, id: "ag-cross-host-child", workspaceId: "ws-1", status: "running", background: false, createdAt: "2026-01-04T00:00:00Z", title: "远端跨工作区子 Agent", requiresAttention: false },
+    ],
+    groups: [{ id: "g1", name: "paseo插件", projects: [pGroups.key, pCross.key] }],
+    activeAgent: aRoot,
+    activeWorkspace: wMain,
   });
   const renderer = harness.mount();
   t.after(() => harness.unmount());
 
-  const coordBtn = renderer.root.findByProps({ accessibilityLabel: "打开Coordinator", accessibilityRole: "button" });
-  const workerBtn = renderer.root.findByProps({ accessibilityLabel: "打开Worker A", accessibilityRole: "button" });
-  assert.equal(coordBtn.props.accessibilityState.selected, false);
-  assert.equal(workerBtn.props.accessibilityState.selected, true);
-
-  // Unrelated agent in the same workspace is not duplicated as an extra sub-row.
+  // Project view: no duplicate parent row, same-workspace subagent tabs never appear,
+  // and child count only counts the cross-host/cross-workspace child (1, not 3!).
+  const projectText = textOf(renderer.toJSON());
+  assert.ok(!projectText.includes("同窗口子标签"), "same-workspace subagent tab must not appear in project view");
+  assert.ok(!projectText.includes("同窗口孙标签"), "same-workspace grandchild tab must not appear in project view");
   assert.equal(
-    renderer.root.findAllByProps({ accessibilityLabel: "打开Unrelated Helper", accessibilityRole: "button" }).length,
-    0,
+    renderer.root.findAllByProps({ accessibilityLabel: "打开项目分组插件", accessibilityRole: "button" }).length,
+    1,
+    "workspace row must not duplicate its parent agent underneath",
+  );
+  const subcount = renderer.root.findByProps({ accessibilityLabel: "1 个子 Agent", accessibilityRole: "button" });
+  assert.equal(textOf(subcount), "1 子");
+  assert.ok(
+    renderer.root.findByProps({ accessibilityLabel: "子 远端跨工作区子 Agent", accessibilityRole: "button" }),
+    "same workspace ID on another host stays a cross-workspace child",
   );
 
-  // Clicking Coordinator opens that specific agent ref.
-  act(() => coordBtn.props.onPress());
-  assert.deepEqual(harness.openedAgents, [aParent]);
+  // Opening drawer also excludes same-workspace tabs.
+  act(() => subcount.props.onPress({ stopPropagation() {} }));
+  assert.ok(!textOf(renderer.toJSON()).includes("同窗口子标签"));
+
+  // Switch to "按关系" view: same-workspace subagent tabs remain absent; cross-host child stays linked.
+  const relToggle = renderer.root.findByProps({ accessibilityLabel: "按关系", accessibilityRole: "button" });
+  act(() => relToggle.props.onPress());
+  const relText = textOf(renderer.toJSON());
+  assert.ok(!relText.includes("同窗口子标签"), "same-workspace subagent tab must not appear in relation view");
+  assert.ok(!relText.includes("同窗口孙标签"));
+  assert.ok(relText.includes("项目分组插件"));
+  assert.ok(relText.includes("远端跨工作区子 Agent"));
+});
+
+test("same workspace with multiple true root agents keeps a single workspace row and missing parents fabricate no link", (t) => {
+  const p1 = ref("project", "host-a", "monorepo");
+  const w1 = ref("workspace", "host-a", "ws-multi-root");
+  const wOrphan = ref("workspace", "host-a", "ws-orphan");
+
+  const aRoot1 = ref("agent", "host-a", "ag-root-1");
+  const aRoot2 = ref("agent", "host-a", "ag-root-2");
+  const aTabOfRoot1 = ref("agent", "host-a", "ag-tab-1");
+  const aMissingParent = ref("agent", "host-a", "ag-archived-parent");
+  const aOrphan = ref("agent", "host-a", "ag-orphan");
+
+  const harness = makeHarness({
+    projects: [{ ref: p1, hostId: "host-a", displayName: "monorepo", iconRevision: null }],
+    workspaces: [
+      {
+        ref: w1, hostId: "host-a", project: p1, pinnedAt: null, labels: [], background: false,
+        branch: "main", createdAt: "2026-01-01T00:00:00Z", lastPromptAt: null, parentAgent: null,
+        indicator: "done", indicatorLabel: null, id: "ws-multi-root", projectId: "monorepo",
+        projectDisplayName: "monorepo", name: "Multi Root WS", title: "Multi Root WS",
+        status: "done", statusEnteredAt: null, archivingAt: null, diffStat: null,
+      },
+      {
+        ref: wOrphan, hostId: "host-a", project: p1, pinnedAt: null, labels: [], background: false,
+        branch: "fix/orphan", createdAt: "2026-01-02T00:00:00Z", lastPromptAt: null, parentAgent: aMissingParent,
+        indicator: "done", indicatorLabel: null, id: "ws-orphan", projectId: "monorepo",
+        projectDisplayName: "monorepo", name: "Orphan WS", title: "Orphan WS",
+        status: "done", statusEnteredAt: null, archivingAt: null, diffStat: null,
+      },
+    ],
+    agents: [
+      { ref: aRoot1, hostId: "host-a", workspace: w1, parentAgent: null, id: "ag-root-1", workspaceId: "ws-multi-root", status: "idle", background: false, createdAt: "2026-01-01T00:00:00Z", title: "Root One", requiresAttention: false },
+      { ref: aRoot2, hostId: "host-a", workspace: w1, parentAgent: null, id: "ag-root-2", workspaceId: "ws-multi-root", status: "idle", background: false, createdAt: "2026-01-02T00:00:00Z", title: "Root Two", requiresAttention: false },
+      { ref: aTabOfRoot1, hostId: "host-a", workspace: w1, parentAgent: aRoot1, id: "ag-tab-1", workspaceId: "ws-multi-root", status: "running", background: false, createdAt: "2026-01-03T00:00:00Z", title: "Inner Tab", requiresAttention: false },
+      { ref: aOrphan, hostId: "host-a", workspace: wOrphan, parentAgent: aMissingParent, id: "ag-orphan", workspaceId: "ws-orphan", status: "idle", background: false, createdAt: "2026-01-04T00:00:00Z", title: "Orphan Agent", requiresAttention: false },
+    ],
+    groups: [{ id: "g1", name: "Work", projects: [p1.key] }],
+    activeAgent: aOrphan,
+    activeWorkspace: wOrphan,
+  });
+  const renderer = harness.mount();
+  t.after(() => harness.unmount());
+
+  // Multi-root workspace renders exactly one WorkspaceRow with default workspace navigation.
+  const multiWsBtn = renderer.root.findByProps({ accessibilityLabel: "打开Multi Root WS", accessibilityRole: "button" });
+  assert.equal(renderer.root.findAllByProps({ accessibilityLabel: "打开Root One", accessibilityRole: "button" }).length, 0);
+  assert.equal(renderer.root.findAllByProps({ accessibilityLabel: "打开Root Two", accessibilityRole: "button" }).length, 0);
+  assert.ok(!textOf(renderer.toJSON()).includes("Inner Tab"));
+  act(() => multiWsBtn.props.onPress());
+  assert.deepEqual(harness.openedWorkspaces, [w1]);
+
+  // Agent whose parent is absent from visible agents keeps its normal WorkspaceRow and default navigation (no fabricated parent).
+  const orphanWsBtn = renderer.root.findByProps({ accessibilityLabel: "打开Orphan WS", accessibilityRole: "button" });
+  assert.equal(
+    renderer.root.findAll((n) => n.props?.accessibilityRole === "button" && String(n.props.accessibilityLabel ?? "").startsWith("父 ")).length,
+    0,
+    "missing parent must not render a fabricated parent jump button",
+  );
+  act(() => orphanWsBtn.props.onPress());
+  assert.deepEqual(harness.openedWorkspaces, [w1, wOrphan]);
+  assert.deepEqual(harness.openedAgents, []);
 });
 
 test("By relation view displays tree hierarchy with full readable project names and single-agent active fallback", (t) => {

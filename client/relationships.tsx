@@ -34,7 +34,10 @@ function stopPress(event?: { stopPropagation?: () => void }) {
 }
 
 function isAgentSelected(sidebar: RelationshipActions, agent: AgentRef, singleWorkspace?: WorkspaceRef): boolean {
-  if (sidebar.view.active.agent) return sidebar.view.active.agent.key === agent.key;
+  const activeAgent = sidebar.view.active.agent;
+  if (activeAgent && sidebar.model.agents.has(activeAgent.key)) {
+    return activeAgent.key === agent.key;
+  }
   return !!singleWorkspace && sidebar.view.active.workspace?.key === singleWorkspace.key;
 }
 
@@ -652,22 +655,17 @@ export function RelationshipWorkspace({
   const { model, view } = sidebar;
   const agents = model.byWorkspace.get(reference.key) ?? [];
   const related = agents.filter((agent) => model.parents.has(agent.key) || model.children.has(agent.key));
-  const row = <WorkspaceRow reference={reference} indent={indent} view={view} onMenu={onMenu} />;
-  if (!related.length) return row;
-  if (agents.length > 1) {
-    return (
-      <>
-        {row}
-        {related.map((agent) => (
-          <AgentRow key={agent.key} agent={agent} indent={indent + 10} sidebar={sidebar} />
-        ))}
-      </>
-    );
+  if (!related.length) {
+    return <WorkspaceRow reference={reference} indent={indent} view={view} onMenu={onMenu} />;
   }
-  const [agent] = related;
+  // Keep a single WorkspaceRow per workspace (never duplicate a parent/subagent row underneath).
+  // When multiple root agents coexist in the same workspace, prefer the active related root and
+  // preserve default workspace navigation on the row itself.
+  const singleRoot = agents.length === 1;
+  const agent = related.find((item) => view.active.agent?.key === item.key) ?? related[0];
   const count = model.children.get(agent.key)?.length ?? 0;
   const parent = model.parents.get(agent.key);
-  const selected = isAgentSelected(sidebar, agent, reference);
+  const selected = isAgentSelected(sidebar, agent, singleRoot ? reference : undefined);
 
   return (
     <>
@@ -680,7 +678,7 @@ export function RelationshipWorkspace({
           relation={{
             key: agent.key,
             highlighted: sidebar.highlighted.has(agent.key),
-            open: () => sidebar.open(agent),
+            open: singleRoot ? () => sidebar.open(agent) : () => view.navigation.openWorkspace(reference),
             onHover: (hover) => sidebar.hover(hover ? agent.key : null),
             trailing: (
               <View style={{ flexDirection: "row", alignItems: "center", gap: 4, flexShrink: 1, minWidth: 0 }}>

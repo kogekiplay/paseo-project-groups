@@ -413,12 +413,14 @@ function GroupsList(view: PluginSidebarViewProps) {
   });
   const relationships = useMemo(() => agentRelationships(agentGroups), [agentGroups]);
   const activeAgentKey = useMemo(() => {
-    if (view.active.agent) return view.active.agent.key;
+    if (view.active.agent && relationships.agents.has(view.active.agent.key)) {
+      return view.active.agent.key;
+    }
     const workspaceKey = view.active.workspace?.key;
     if (!workspaceKey) return null;
     const agents = relationships.byWorkspace.get(workspaceKey);
     return agents?.length === 1 ? agents[0].key : null;
-  }, [relationships.byWorkspace, view.active.agent, view.active.workspace]);
+  }, [relationships.agents, relationships.byWorkspace, view.active.agent, view.active.workspace]);
   const family = useMemo(
     () => activeFamily(relationships, hoveredAgent) ?? activeFamily(relationships, activeAgentKey),
     [activeAgentKey, hoveredAgent, relationships],

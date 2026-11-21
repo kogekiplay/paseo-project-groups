@@ -1,37 +1,85 @@
-import type { AgentRef } from "@getpaseo/plugin/client";
+import type { AgentRef, WorkspaceRef } from "@getpaseo/plugin/client";
 
 interface AgentGroup {
   readonly key: string;
   readonly items: readonly AgentRef[];
 }
 
+/** Compare two host-scoped workspace refs or keys so same-ID workspaces on different hosts stay distinct. */
+export function sameWorkspaceRef(
+  left: Pick<WorkspaceRef, "hostId" | "id" | "key"> | string | undefined,
+  right: Pick<WorkspaceRef, "hostId" | "id" | "key"> | string | undefined,
+): boolean {
+  if (!left || !right) return false;
+  if (typeof left === "string" || typeof right === "string") return left === right;
+  if (left.key && right.key) return left.key === right.key;
+  return left.hostId === right.hostId && left.id === right.id;
+}
+
+/**
+ * Build sidebar agent relationships from host-scoped workspace (`w:<workspaceRef.key>`) and
+ * parent (`a:<agentRef.key>`) groups.
+ *
+ * Follows Paseo's workspace-root policy: a child whose visible parent lives in the same
+ * host-scoped workspace is an in-workspace tab and is excluded from sidebar lists, counts,
+ * rails, and navigation. Cross-workspace children (including same workspace ID on another host)
+ * remain visible roots linked to their parent. If a parent is not in the visible set, no link
+ * is fabricated.
+ */
 export function agentRelationships(groups: readonly AgentGroup[]) {
-  const agents = new Map<string, AgentRef>();
-  const workspaces = new Map<string, string>();
-  const byWorkspace = new Map<string, readonly AgentRef[]>();
+  const rawAgents = new Map<string, AgentRef>();
+  const rawWorkspaces = new Map<string, string>();
+  const rawByWorkspace = new Map<string, readonly AgentRef[]>();
   for (const group of groups) {
     if (!group.key.startsWith("w:")) continue;
     const key = group.key.slice(2);
-    byWorkspace.set(key, group.items);
+    rawByWorkspace.set(key, group.items);
     for (const agent of group.items) {
+      rawAgents.set(agent.key, agent);
+      rawWorkspaces.set(agent.key, key);
+    }
+  }
+
+  const rawParents = new Map<string, AgentRef>();
+  for (const group of groups) {
+    if (!group.key.startsWith("a:")) continue;
+    const parent = rawAgents.get(group.key.slice(2));
+    if (!parent) continue;
+    for (const child of group.items) {
+      if (child.key === parent.key || !rawAgents.has(child.key)) continue;
+      rawParents.set(child.key, parent);
+    }
+  }
+
+  const excluded = new Set<string>();
+  for (const [childKey, parent] of rawParents) {
+    if (sameWorkspaceRef(rawWorkspaces.get(childKey), rawWorkspaces.get(parent.key))) {
+      excluded.add(childKey);
+    }
+  }
+
+  const agents = new Map<string, AgentRef>();
+  const workspaces = new Map<string, string>();
+  const byWorkspace = new Map<string, readonly AgentRef[]>();
+  for (const [workspaceKey, items] of rawByWorkspace) {
+    const roots = items.filter((agent) => !excluded.has(agent.key));
+    if (roots.length) byWorkspace.set(workspaceKey, roots);
+    for (const agent of roots) {
       agents.set(agent.key, agent);
-      workspaces.set(agent.key, key);
+      workspaces.set(agent.key, workspaceKey);
     }
   }
 
   const parents = new Map<string, AgentRef>();
   const children = new Map<string, AgentRef[]>();
-  for (const group of groups) {
-    if (!group.key.startsWith("a:")) continue;
-    const parent = agents.get(group.key.slice(2));
-    if (!parent) continue;
-    for (const child of group.items) {
-      if (child.key === parent.key || !agents.has(child.key)) continue;
-      parents.set(child.key, parent);
-      const siblings = children.get(parent.key);
-      if (siblings) siblings.push(child);
-      else children.set(parent.key, [child]);
-    }
+  for (const [childKey, parent] of rawParents) {
+    if (excluded.has(childKey) || excluded.has(parent.key)) continue;
+    const child = agents.get(childKey);
+    if (!child || !agents.has(parent.key)) continue;
+    parents.set(childKey, parent);
+    const siblings = children.get(parent.key);
+    if (siblings) siblings.push(child);
+    else children.set(parent.key, [child]);
   }
 
   return { agents, workspaces, byWorkspace, parents, children };
@@ -41,7 +89,7 @@ export type AgentRelationships = ReturnType<typeof agentRelationships>;
 
 /** Show the selected agent's parent and siblings, or its own children if it is a root. */
 export function activeFamily(relationships: AgentRelationships, key: string | null) {
-  if (!key) return null;
+  if (!key || !relationships.agents.has(key)) return null;
   const parent = relationships.parents.get(key) ?? relationships.agents.get(key);
   const children = parent && relationships.children.get(parent.key);
   return parent && children?.length ? { parent, children } : null;
