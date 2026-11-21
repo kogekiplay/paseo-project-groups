@@ -9,7 +9,7 @@ import {
 } from "@getpaseo/plugin/client";
 import { Icon, TextInput } from "@getpaseo/plugin/client/ui";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Platform, Pressable, Text, View } from "react-native";
 import { useDrag, useDragHandle, useDragSlot } from "./drag";
 import { DecorIcon, useDecorations } from "./decor";
 import { useT } from "./i18n";
@@ -467,7 +467,14 @@ export function StatusDot({ color, running = false }: { color: string; running?:
   return (
     <View
       pointerEvents="none"
-      style={{ width: 12, height: 12, flexShrink: 0, alignItems: "center", justifyContent: "center" }}
+      style={{
+        width: 12,
+        height: 12,
+        flexShrink: 0,
+        alignItems: "center",
+        justifyContent: "center",
+        transform: Platform.OS === "ios" ? [{ translateY: -3 }] : undefined,
+      }}
     >
       {running ? (
         <RunningSpinner color={color} size={12} />
