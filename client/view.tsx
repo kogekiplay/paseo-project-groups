@@ -70,7 +70,7 @@ import {
   useRowStyles,
 } from "./rows";
 import { useSettingsSaver } from "./save";
-import { activeFamily, agentRelationships } from "./relationship-model";
+import { activeFamily, agentRelationships, relationshipFamilies } from "./relationship-model";
 import { RelationshipRail, useRelationshipRail } from "./relationship-rail";
 import { RelationshipWorkspace, RelationshipsList, type RelationshipActions } from "./relationships";
 import { bindSidebarKeys } from "./web";
@@ -411,6 +411,7 @@ function GroupsList(view: PluginSidebarViewProps) {
       : `w:${agent.workspace.key}`,
   });
   const relationships = useMemo(() => agentRelationships(agentGroups), [agentGroups]);
+  const families = useMemo(() => relationshipFamilies(relationships), [relationships]);
   const activeAgentKey = useMemo(() => {
     if (view.active.agent && relationships.agents.has(view.active.agent.key)) {
       return view.active.agent.key;
@@ -613,11 +614,17 @@ function GroupsList(view: PluginSidebarViewProps) {
   const contentRef = useRef<View>(null);
   const scrollRef = useRef<NativeScrollView>(null);
   const drag = useDragController(viewportRef, scrollRef, onDrop);
-  const { register, refresh, revealAgent, onScroll: onRailScroll, onViewportHeight, points } = useRelationshipRail(
-    byRelation ? null : family,
-    contentRef,
-    scrollRef,
-  );
+  const railFamilies = useMemo(() => (byRelation ? [] : families), [byRelation, families]);
+  const {
+    register,
+    refresh,
+    revealAgent,
+    onScroll: onRailScroll,
+    onViewportHeight,
+    rails,
+    laneCount,
+    gutterExtra,
+  } = useRelationshipRail(railFamilies, contentRef, scrollRef);
   useEffect(() => { refresh(); }, [collapsedList, layout, refresh]);
 
   /** Normal click/tap opens the agent directly without disturbing sidebar scroll or folds. */
@@ -952,7 +959,7 @@ function GroupsList(view: PluginSidebarViewProps) {
               onContentSizeChange={(_width, height) => { drag.controller.onContentHeight(height); refresh(); }}
               contentContainerStyle={{ paddingBottom: 24 }}
             >
-              <View ref={contentRef} collapsable={false} onLayout={refresh}>
+              <View ref={contentRef} collapsable={false} onLayout={refresh} style={gutterExtra ? { paddingLeft: gutterExtra } : undefined}>
                 {byRelation ? <RelationshipsList sidebar={sidebar} /> : <>
                   {pinned.length ? (
                     <View>
@@ -1017,7 +1024,7 @@ function GroupsList(view: PluginSidebarViewProps) {
                   ))}
 
                 </>}
-                <RelationshipRail points={points} theme={view.theme} />
+                <RelationshipRail rails={rails} laneCount={laneCount} activeParentKey={family?.parent.key ?? null} theme={view.theme} />
               </View>
               {drag.hit ? <DropIndicator hit={drag.hit} theme={view.theme} /> : null}
             </ScrollView>

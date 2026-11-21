@@ -755,16 +755,86 @@ test("By relation view displays clickable tree rows with full project names, no 
   assert.equal(harness.scrollCalls.length, 0, "clicking a tree row must not call scrollTo");
 });
 
-test("useRelationshipRail supports measureLayout, measureInWindow fallback, stability, and viewport-aware minimal scroll", async (t) => {
+test("always-visible rail renders muted when unselected or on unrelated session, switches to accent on active family, and respects collapsed folds", async (t) => {
+  const data = sampleCrossProjectData();
+  // Select an unrelated workspace (paseo-project-groups) with no hover.
+  const harness = makeHarness({
+    projects: data.projects,
+    workspaces: data.workspaces,
+    agents: data.agents,
+    groups: data.groups,
+    activeAgent: data.refs.aGroups,
+    activeWorkspace: data.refs.wGroups,
+  });
+  const renderer = harness.mount();
+  t.after(() => harness.unmount());
+
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 15));
+  });
+
+  // Rail overlay is mounted even though an unrelated session is active!
+  const railOverlay = renderer.root.findByProps({ accessibilityElementsHidden: true, pointerEvents: "none" });
+  const railViews = railOverlay.findAllByType("View");
+  assert.ok(
+    railViews.some((v) => v.props.style?.backgroundColor === theme.colors.foregroundMuted && v.props.style?.opacity < 1),
+    "unrelated selection draws muted low-contrast rail",
+  );
+  assert.equal(
+    railViews.some((v) => v.props.style?.backgroundColor === theme.colors.accent),
+    false,
+    "unrelated selection does not highlight rail with accent",
+  );
+
+  // Hovering a member of the MOM family promotes its rail to accent without scrolling or unfolding.
+  const parentRow = renderer.root.findByProps({ accessibilityLabel: "打开MOM CLI", accessibilityRole: "button" });
+  act(() => parentRow.props.onHoverIn());
+  const hoveredViews = renderer.root.findByProps({ accessibilityElementsHidden: true, pointerEvents: "none" }).findAllByType("View");
+  assert.ok(
+    hoveredViews.some((v) => v.props.style?.backgroundColor === theme.colors.accent && v.props.style?.opacity === 1),
+    "hovered family rail switches to accent",
+  );
+  assert.equal(harness.scrollCalls.length, 0);
+  assert.equal(harness.savedLayouts.length, 0);
+
+  // When parent project is collapsed, no rail is drawn and nothing auto-expands.
+  const collapsedHarness = makeHarness({
+    projects: data.projects,
+    workspaces: data.workspaces,
+    agents: data.agents,
+    groups: data.groups,
+    collapsed: [`p:${data.refs.pCli.key}`],
+    activeAgent: null,
+    activeWorkspace: null,
+  });
+  const collapsedRenderer = collapsedHarness.mount();
+  t.after(() => collapsedHarness.unmount());
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 15));
+  });
+  assert.equal(
+    collapsedRenderer.root.findAllByProps({ accessibilityElementsHidden: true, pointerEvents: "none" }).length,
+    0,
+    "collapsed parent hides rail without auto-expanding",
+  );
+  assert.equal(collapsedHarness.savedLayouts.length, 0);
+});
+
+test("useRelationshipRail batches multiple families, assigns separate lanes for overlapping spans, keeps stability, and minimally scrolls", async (t) => {
   const load = createLoader({
     "react-native": { Platform: { OS: "web" }, View: "View" },
   });
   const { useRelationshipRail, RelationshipRail } = load("client/relationship-rail.tsx");
 
-  const parent = ref("agent", "h1", "p");
-  const childAbove = ref("agent", "h1", "c-above");
-  const childBelow = ref("agent", "h1", "c-below");
-  const family = { parent, children: [childAbove, childBelow] };
+  const p1 = ref("agent", "h1", "p1");
+  const c1Above = ref("agent", "h1", "c1-above");
+  const c1Below = ref("agent", "h1", "c1-below");
+  const p2 = ref("agent", "h1", "p2");
+  const c2 = ref("agent", "h1", "c2");
+  const families = [
+    { parent: p1, children: [c1Above, c1Below] },
+    { parent: p2, children: [c2] },
+  ];
 
   let renders = 0;
   let hookApi;
@@ -783,15 +853,20 @@ test("useRelationshipRail supports measureLayout, measureInWindow fallback, stab
     },
   };
 
-  function Harness({ activeFamily }) {
+  function Harness({ activeFamilies, activeParentKey = null }) {
     renders += 1;
-    hookApi = useRelationshipRail(activeFamily, contentRef, scrollRef);
-    return React.createElement(RelationshipRail, { points: hookApi.points, theme });
+    hookApi = useRelationshipRail(activeFamilies, contentRef, scrollRef);
+    return React.createElement(RelationshipRail, {
+      rails: hookApi.rails,
+      laneCount: hookApi.laneCount,
+      activeParentKey,
+      theme,
+    });
   }
 
   let renderer;
   await act(async () => {
-    renderer = create(React.createElement(Harness, { activeFamily: family }));
+    renderer = create(React.createElement(Harness, { activeFamilies: families, activeParentKey: p2.key }));
   });
   t.after(() => act(() => renderer.unmount()));
 
@@ -804,20 +879,22 @@ test("useRelationshipRail supports measureLayout, measureInWindow fallback, stab
     querySelector: () => ({ focus: (opts) => focusCalls.push(opts) }),
   });
 
+  // Family 1 spans [20..188], Family 2 spans [100..228] -> overlapping spans get separate lanes (0 & 1).
   await act(async () => {
     hookApi.onViewportHeight(300);
     hookApi.onScroll(0);
-    hookApi.register(parent.key, makeNode(80));
-    hookApi.register(childAbove.key, makeNode(20));
-    hookApi.register(childBelow.key, makeNode(160));
+    hookApi.register(p1.key, makeNode(80));
+    hookApi.register(c1Above.key, makeNode(20));
+    hookApi.register(c1Below.key, makeNode(160));
+    hookApi.register(p2.key, makeNode(100));
+    hookApi.register(c2.key, makeNode(200));
     await new Promise((r) => setTimeout(r, 15));
   });
 
-  assert.equal(hookApi.points.parent, 94);
-  assert.deepEqual(
-    hookApi.points.children.map((c) => [c.key, c.y]),
-    [[childAbove.key, 34], [childBelow.key, 174]],
-  );
+  assert.equal(hookApi.rails.length, 2);
+  assert.equal(hookApi.laneCount, 2, "overlapping families get separate vertical lanes");
+  assert.equal(hookApi.gutterExtra, 5);
+  assert.notEqual(hookApi.rails[0].lane, hookApi.rails[1].lane);
 
   // Stability check: repeated refreshes with identical layout produce ZERO extra renders.
   const settledRenders = renders;
@@ -829,23 +906,31 @@ test("useRelationshipRail supports measureLayout, measureInWindow fallback, stab
   });
   assert.equal(renders, settledRenders, "identical measurements must not trigger re-renders");
 
+  // Non-overlapping families share lane 0 with zero extra gutter width.
+  await act(async () => {
+    hookApi.register(p2.key, makeNode(240));
+    hookApi.register(c2.key, makeNode(300));
+    await new Promise((r) => setTimeout(r, 15));
+  });
+  assert.equal(hookApi.laneCount, 1, "non-overlapping families share a single lane");
+  assert.equal(hookApi.gutterExtra, 0);
+
   // Already-visible target in viewport [0, 300]: focus with preventScroll, NO scrollTo!
   await act(async () => {
-    hookApi.revealAgent(childBelow.key, { focus: true });
+    hookApi.revealAgent(c1Below.key, { focus: true });
     await new Promise((r) => setTimeout(r, 15));
   });
   assert.equal(scrolled.length, 0, "target already inside viewport must not scroll");
   assert.equal(focusCalls.length, 1);
   assert.equal(focusCalls[0].preventScroll, true);
 
-  // Target below viewport [0, 300] (y=420, bottom=448): minimal scroll to 448 - 300 + 8 = 156.
+  // Target below viewport [0, 300] (y=420, bottom=448): minimal scroll via measureInWindow fallback to 156.
   useFallback = true;
   await act(async () => {
-    hookApi.register(childBelow.key, makeNode(420));
-    hookApi.revealAgent(childBelow.key, { focus: true });
+    hookApi.register(c1Below.key, makeNode(420));
+    hookApi.revealAgent(c1Below.key, { focus: true });
     await new Promise((r) => setTimeout(r, 15));
   });
-  assert.equal(hookApi.points.children[1].y, 434);
   assert.equal(scrolled.length, 1);
   assert.equal(scrolled[0].y, 156);
   assert.equal(scrolled[0].animated, false);
@@ -853,20 +938,20 @@ test("useRelationshipRail supports measureLayout, measureInWindow fallback, stab
   // Target above viewport [200, 500] (y=20): minimal scroll to 20 - 8 = 12.
   await act(async () => {
     hookApi.onScroll(200);
-    hookApi.revealAgent(childAbove.key, { focus: true });
+    hookApi.revealAgent(c1Above.key, { focus: true });
     await new Promise((r) => setTimeout(r, 15));
   });
   assert.equal(scrolled.length, 2);
   assert.equal(scrolled[1].y, 12);
 
-  // Zero-height (hidden/collapsed) nodes are excluded rather than drawing dangling elbows.
+  // Zero-height (hidden/collapsed) children exclude that family while keeping the visible family.
   await act(async () => {
-    hookApi.register(childAbove.key, makeNode(20, 0));
-    hookApi.register(childBelow.key, makeNode(420, 0));
+    hookApi.register(c1Above.key, makeNode(20, 0));
+    hookApi.register(c1Below.key, makeNode(420, 0));
     await new Promise((r) => setTimeout(r, 15));
   });
-  assert.equal(hookApi.points.children.length, 0);
-  assert.equal(renderer.toJSON(), null);
+  assert.equal(hookApi.rails.length, 1);
+  assert.equal(hookApi.rails[0].parentKey, p2.key);
 });
 
 test("bindSidebarKeys handles Arrow nav, group/project fold, P/[/], and ignores IME & text inputs", () => {

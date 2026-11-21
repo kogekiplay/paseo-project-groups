@@ -87,8 +87,24 @@ export function agentRelationships(groups: readonly AgentGroup[]) {
 
 export type AgentRelationships = ReturnType<typeof agentRelationships>;
 
+export interface RelationshipFamily {
+  readonly parent: AgentRef;
+  readonly children: readonly AgentRef[];
+}
+
+/** All visible cross-workspace parent-child families in deterministic order. */
+export function relationshipFamilies(relationships: AgentRelationships): RelationshipFamily[] {
+  const families: RelationshipFamily[] = [];
+  for (const [parentKey, children] of relationships.children) {
+    if (!children.length) continue;
+    const parent = relationships.agents.get(parentKey);
+    if (parent) families.push({ parent, children });
+  }
+  return families;
+}
+
 /** Show the selected agent's parent and siblings, or its own children if it is a root. */
-export function activeFamily(relationships: AgentRelationships, key: string | null) {
+export function activeFamily(relationships: AgentRelationships, key: string | null): RelationshipFamily | null {
   if (!key || !relationships.agents.has(key)) return null;
   const parent = relationships.parents.get(key) ?? relationships.agents.get(key);
   const children = parent && relationships.children.get(parent.key);
