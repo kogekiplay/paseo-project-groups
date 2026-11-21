@@ -58,6 +58,7 @@ function loadClient(file, host = {}) {
     "./decor": {
       useDecorations: () => ({ get: () => ({ color: null, icon: null }) }),
     },
+    "./web": { sidebarNavProps: () => ({}) },
   };
   const source = readFileSync(path.join(__dirname, "..", "client", file), "utf8");
   const { outputText } = ts.transpileModule(source, {

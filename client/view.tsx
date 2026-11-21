@@ -1,9 +1,11 @@
 import {
+  useAgents,
   useHosts,
   useProjects,
   useRpc,
   useSettings,
   useWorkspaces,
+  type AgentRef,
   type PluginSidebarViewProps,
   type ProjectRef,
   type WorkspaceRef,
@@ -65,10 +67,13 @@ import {
   SectionHeading,
   TextButton,
   UngroupedHeader,
-  WorkspaceRow,
   useRowStyles,
 } from "./rows";
 import { useSettingsSaver } from "./save";
+import { activeFamily, agentRelationships } from "./relationship-model";
+import { RelationshipRail, useRelationshipRail } from "./relationship-rail";
+import { RelationshipWorkspace, RelationshipsList, type RelationshipActions } from "./relationships";
+import { bindSidebarKeys } from "./web";
 
 const UNGROUPED_KEY = "u";
 const WEB = Platform.OS === "web";
@@ -232,7 +237,12 @@ function StatusMessage({
   );
 }
 
-function ToolbarRow({ view, onCreateGroup }: { view: PluginSidebarViewProps; onCreateGroup: () => void }) {
+function ToolbarRow({ view, onCreateGroup, byRelation, setByRelation }: {
+  view: PluginSidebarViewProps;
+  onCreateGroup: () => void;
+  byRelation: boolean;
+  setByRelation: (value: boolean) => void;
+}) {
   const t = useT();
   const look = useLook();
   const actions = useViewActions();
@@ -247,8 +257,55 @@ function ToolbarRow({ view, onCreateGroup }: { view: PluginSidebarViewProps; onC
         borderBottomColor: view.theme.colors.border,
       }}
     >
-      <View style={{ flex: 1 }}>
+      <View style={{ flex: 1, minWidth: 0 }}>
         <TextButton icon="FolderPlus" label={t("sidebar.newGroup")} view={view} onPress={onCreateGroup} />
+      </View>
+      <View
+        style={{
+          flexDirection: "row",
+          flexShrink: 0,
+          gap: 2,
+          borderRadius: 6,
+          padding: 2,
+          borderWidth: 1,
+          borderColor: view.theme.colors.border,
+          backgroundColor: view.theme.colors.surface1,
+        }}
+      >
+        {([false, true] as const).map((value) => {
+          const selected = byRelation === value;
+          const label = t(value ? "relation.relationships" : "relation.projects");
+          return (
+            <Pressable
+              key={label}
+              accessibilityRole="button"
+              accessibilityLabel={label}
+              accessibilityState={{ selected }}
+              hitSlop={4}
+              onPress={() => setByRelation(value)}
+              style={{
+                justifyContent: "center",
+                minHeight: view.layout.compact ? 30 : 22,
+                paddingHorizontal: 6,
+                borderRadius: 4,
+                backgroundColor: selected ? view.theme.colors.surface0 : undefined,
+              }}
+            >
+              <Text
+                selectable={false}
+                numberOfLines={1}
+                style={{
+                  color: selected ? view.theme.colors.foreground : view.theme.colors.foregroundMuted,
+                  fontSize: look.small,
+                  lineHeight: look.smallLine,
+                  fontWeight: selected ? "500" : "400",
+                }}
+              >
+                {label}
+              </Text>
+            </Pressable>
+          );
+        })}
       </View>
       <Pressable
         accessibilityRole="button"
@@ -333,6 +390,47 @@ function GroupsList(view: PluginSidebarViewProps) {
       look.showPinned && !!item.pinnedAt && (look.showBackground || !item.background) && !item.archivingAt,
     orderBy: "pinnedAt",
   });
+  const [byRelation, setByRelation] = useState(false);
+  const [expandedParent, setExpandedParent] = useState<string | null>(null);
+  const [hoveredAgent, setHoveredAgent] = useState<string | null>(null);
+  const visibleWorkspaces = useWorkspaces({
+    where: (item) => (look.showBackground || !item.background) && !item.archivingAt,
+    groupBy: (item) => item.project.key,
+  });
+  const workspaceProjects = useMemo(() => {
+    const result = new Map<string, string>();
+    for (const group of visibleWorkspaces) {
+      for (const workspace of group.items) result.set(workspace.key, group.key);
+    }
+    return result;
+  }, [visibleWorkspaces]);
+  const agentGroups = useAgents({
+    where: (agent) => !agent.background && workspaceProjects.has(agent.workspace.key),
+    orderBy: ["createdAt", "asc"],
+    groupBy: (agent) => agent.parentAgent
+      ? [`w:${agent.workspace.key}`, `a:${agent.parentAgent.key}`]
+      : `w:${agent.workspace.key}`,
+  });
+  const relationships = useMemo(() => agentRelationships(agentGroups), [agentGroups]);
+  const activeAgentKey = useMemo(() => {
+    if (view.active.agent) return view.active.agent.key;
+    const workspaceKey = view.active.workspace?.key;
+    if (!workspaceKey) return null;
+    const agents = relationships.byWorkspace.get(workspaceKey);
+    return agents?.length === 1 ? agents[0].key : null;
+  }, [relationships.byWorkspace, view.active.agent, view.active.workspace]);
+  const family = useMemo(
+    () => activeFamily(relationships, hoveredAgent) ?? activeFamily(relationships, activeAgentKey),
+    [activeAgentKey, hoveredAgent, relationships],
+  );
+  const highlighted = useMemo(
+    () => new Set(family ? [family.parent.key, ...family.children.map((agent) => agent.key)] : []),
+    [family],
+  );
+  useEffect(() => {
+    if (expandedParent && !relationships.children.get(expandedParent)?.length) setExpandedParent(null);
+  }, [expandedParent, relationships.children]);
+
   const byKey = useMemo(() => new Map(projects.map((project) => [project.key, project])), [projects]);
   const order = useMemo(() => projects.map((project) => project.key), [projects]);
   const layout = useMemo(() => sidebarLayout(groups, parents, order), [groups, order, parents]);
@@ -514,8 +612,54 @@ function GroupsList(view: PluginSidebarViewProps) {
   );
 
   const viewportRef = useRef<View>(null);
+  const contentRef = useRef<View>(null);
   const scrollRef = useRef<NativeScrollView>(null);
   const drag = useDragController(viewportRef, scrollRef, onDrop);
+  const { register, refresh, revealAgent, points } = useRelationshipRail(byRelation ? null : family, contentRef, scrollRef);
+  useEffect(() => { refresh(); }, [collapsedList, layout, refresh]);
+
+  const openAgent = useCallback((agent: AgentRef, options?: { focus?: boolean }) => {
+    const workspace = relationships.workspaces.get(agent.key);
+    const project = workspace ? workspaceProjects.get(workspace) : undefined;
+    if (!byRelation && project) {
+      const section = sectionOf(layout, project);
+      const containingProject = parents[project];
+      const folds = [`p:${project}`];
+      if (containingProject) folds.push(`p:${containingProject}`);
+      if (section !== undefined) folds.push(section === null ? ungroupedKeyOf(project) : `g:${section}`);
+      reveal(folds);
+    }
+    revealAgent(agent.key, options);
+    view.navigation.openAgent(agent);
+  }, [byRelation, layout, parents, relationships, reveal, revealAgent, ungroupedKeyOf, view.navigation, workspaceProjects]);
+
+  useEffect(() => bindSidebarKeys(viewportRef.current, (key, direction) => {
+    const parent = relationships.parents.get(key);
+    if (direction === "parent") {
+      if (!parent) return false;
+      openAgent(parent, { focus: true });
+      return true;
+    }
+    if (parent) {
+      const siblings = relationships.children.get(parent.key);
+      if (!siblings || siblings.length < 2) return false;
+      const index = siblings.findIndex((agent) => agent.key === key);
+      const step = direction === "next" ? 1 : siblings.length - 1;
+      openAgent(siblings[(index + step) % siblings.length], { focus: true });
+      return true;
+    }
+    const children = relationships.children.get(key);
+    if (!children?.length) return false;
+    openAgent(direction === "next" ? children[0] : children[children.length - 1], { focus: true });
+    return true;
+  }), [openAgent, relationships, groupsState.status, layoutState.status]);
+
+  const switchMode = (next: boolean) => {
+    if (next === byRelation) return;
+    setByRelation(next);
+    setHoveredAgent(null);
+    scrollRef.current?.scrollTo({ y: 0, animated: false });
+  };
 
   const createGroup = useCallback(() => {
     const created = addGroup(
@@ -736,6 +880,15 @@ function GroupsList(view: PluginSidebarViewProps) {
         ? drag.subject.id
         : null;
 
+  const sidebar: RelationshipActions = {
+    view, model: relationships, highlighted, expanded: expandedParent,
+    open: openAgent, toggle: (key) => setExpandedParent((current) => current === key ? null : key),
+    hover: setHoveredAgent, register, refresh,
+  };
+  const renderWorkspace = (reference: WorkspaceRef, indent: number) => (
+    <RelationshipWorkspace key={reference.key} reference={reference} indent={indent} sidebar={sidebar} onMenu={openWorkspaceMenu} />
+  );
+
   const projectBlock = (reference: ProjectRef, groupId: string | null, nested = false): ReactNode => {
     const children = nested
       ? []
@@ -752,7 +905,7 @@ function GroupsList(view: PluginSidebarViewProps) {
         view={view}
         onToggle={toggleProject}
         onMenu={openProjectMenu}
-        onWorkspaceMenu={openWorkspaceMenu}
+        renderWorkspace={renderWorkspace}
         // Inside a host's own Ungrouped section the header already names the host.
         hostLabel={multiHost && look.showHostTags && groupId !== null ? hostLabel(reference.hostId) : null}
       >
@@ -765,86 +918,84 @@ function GroupsList(view: PluginSidebarViewProps) {
     <DecorationsContext.Provider value={decorations}>
       <DragProvider value={drag.controller}>
         <View style={{ flex: 1 }}>
-          <ToolbarRow view={view} onCreateGroup={createGroup} />
+          <ToolbarRow view={view} byRelation={byRelation} setByRelation={switchMode}
+            onCreateGroup={() => { switchMode(false); createGroup(); }} />
           <View ref={viewportRef} {...drag.surfaceHandlers} style={{ flex: 1 }}>
             <ScrollView
               ref={scrollRef}
               scrollEnabled={!drag.scrollLocked}
               scrollEventThrottle={16}
               onScroll={(event) => drag.controller.onScroll(event.nativeEvent.contentOffset.y)}
-              onContentSizeChange={(_width, height) => drag.controller.onContentHeight(height)}
+              onContentSizeChange={(_width, height) => { drag.controller.onContentHeight(height); refresh(); }}
               contentContainerStyle={{ paddingBottom: 24 }}
             >
-              {pinned.length ? (
-                <View>
-                  <SectionHeading title={t("sidebar.pinned")} view={view} />
-                  {pinned.map((reference) => (
-                    <WorkspaceRow
-                      key={reference.key}
-                      reference={reference}
-                      indent={12}
-                      view={view}
-                      onMenu={openWorkspaceMenu}
-                    />
-                  ))}
-                </View>
-              ) : null}
-
-              {groups.length === 0 ? (
-                <View style={{ paddingHorizontal: 12, paddingTop: 10 }}>
-                  <Text style={styles.detail}>{t("sidebar.emptyHint")}</Text>
-                </View>
-              ) : null}
-
-              {groups.map((group, index) => {
-                const members = refsOf(layout.groups.get(group.id) ?? []);
-                const folded = collapsed.has(`g:${group.id}`);
-                return (
-                  <Fragment key={group.id}>
-                    {index > 0 || pinned.length ? <View style={{ height: look.groupGap }} /> : null}
-                    <GroupHeader
-                      group={group}
-                      statusKeys={withSubProjects(members.map((reference) => reference.key))}
-                      count={members.length}
-                      collapsed={folded}
-                      renaming={renamingId === group.id}
-                      dragging={draggingKey === group.id}
-                      view={view}
-                      onToggle={toggleGroup}
-                      onStartRename={setRenamingId}
-                      onRename={rename}
-                      onCancelRename={cancelRename}
-                      onDelete={requestDelete}
-                    />
-                    {folded ? null : members.length ? (
-                      members.map((reference) => projectBlock(reference, group.id))
-                    ) : (
-                      <EmptyGroupRow groupId={group.id} view={view} />
-                    )}
-                  </Fragment>
-                );
-              })}
-
-              {ungroupedSections.map((section, index) => (
-                <Fragment key={section.foldKey}>
-                  {index > 0 || groups.length || pinned.length ? (
-                    <View style={{ height: look.groupGap }} />
+              <View ref={contentRef} collapsable={false} onLayout={refresh}>
+                {byRelation ? <RelationshipsList sidebar={sidebar} /> : <>
+                  {pinned.length ? (
+                    <View>
+                      <SectionHeading title={t("sidebar.pinned")} view={view} />
+                      {pinned.map((reference) => renderWorkspace(reference, 18))}
+                    </View>
                   ) : null}
-                  <UngroupedHeader
-                    projects={withSubProjects(section.keys)}
-                    count={section.keys.length}
-                    collapsed={collapsed.has(section.foldKey)}
-                    view={view}
-                    onToggle={() => toggle(section.foldKey)}
-                    hostId={section.hostId}
-                    hostLabel={section.hostId ? hostLabel(section.hostId) : null}
-                  />
-                  {collapsed.has(section.foldKey)
-                    ? null
-                    : refsOf(section.keys).map((reference) => projectBlock(reference, null))}
-                </Fragment>
-              ))}
 
+                  {groups.length === 0 ? (
+                    <View style={{ paddingHorizontal: 12, paddingTop: 10 }}>
+                      <Text style={styles.detail}>{t("sidebar.emptyHint")}</Text>
+                    </View>
+                  ) : null}
+
+                  {groups.map((group, index) => {
+                    const members = refsOf(layout.groups.get(group.id) ?? []);
+                    const folded = collapsed.has(`g:${group.id}`);
+                    return (
+                      <Fragment key={group.id}>
+                        {index > 0 || pinned.length ? <View style={{ height: look.groupGap }} /> : null}
+                        <GroupHeader
+                          group={group}
+                          statusKeys={withSubProjects(members.map((reference) => reference.key))}
+                          count={members.length}
+                          collapsed={folded}
+                          renaming={renamingId === group.id}
+                          dragging={draggingKey === group.id}
+                          view={view}
+                          onToggle={toggleGroup}
+                          onStartRename={setRenamingId}
+                          onRename={rename}
+                          onCancelRename={cancelRename}
+                          onDelete={requestDelete}
+                        />
+                        {folded ? null : members.length ? (
+                          members.map((reference) => projectBlock(reference, group.id))
+                        ) : (
+                          <EmptyGroupRow groupId={group.id} view={view} />
+                        )}
+                      </Fragment>
+                    );
+                  })}
+
+                  {ungroupedSections.map((section, index) => (
+                    <Fragment key={section.foldKey}>
+                      {index > 0 || groups.length || pinned.length ? (
+                        <View style={{ height: look.groupGap }} />
+                      ) : null}
+                      <UngroupedHeader
+                        projects={withSubProjects(section.keys)}
+                        count={section.keys.length}
+                        collapsed={collapsed.has(section.foldKey)}
+                        view={view}
+                        onToggle={() => toggle(section.foldKey)}
+                        hostId={section.hostId}
+                        hostLabel={section.hostId ? hostLabel(section.hostId) : null}
+                      />
+                      {collapsed.has(section.foldKey)
+                        ? null
+                        : refsOf(section.keys).map((reference) => projectBlock(reference, null))}
+                    </Fragment>
+                  ))}
+
+                </>}
+                <RelationshipRail points={points} theme={view.theme} />
+              </View>
               {drag.hit ? <DropIndicator hit={drag.hit} theme={view.theme} /> : null}
             </ScrollView>
             {drag.subject ? (

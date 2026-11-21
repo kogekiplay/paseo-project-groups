@@ -18,6 +18,7 @@ import { LabelChip, labelKey, useLabelCatalog } from "./labels";
 import { compactTimeAgo, compareWorkspaceTimes, mostUrgent } from "./model";
 import { ProjectIcon } from "./project-icon";
 import { RunningSpinner } from "./running-spinner";
+import { sidebarNavProps } from "./web";
 import type { ProjectGroup } from "../shared/settings";
 
 type Theme = PluginSidebarViewProps["theme"];
@@ -287,7 +288,9 @@ export function GroupHeader({
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={t(collapsed ? "common.expand" : "common.collapse", { name: group.name })}
-        accessibilityHint={t("group.dragHint")}
+        accessibilityState={{ expanded: !collapsed }}
+          {...sidebarNavProps({ pgNav: "" })}
+          accessibilityHint={t("group.dragHint")}
         onPress={toggle}
         onLongPress={handle.onLongPress}
         onPressOut={handle.onPressOut}
@@ -423,6 +426,8 @@ export function UngroupedHeader({
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={t(collapsed ? "common.expand" : "common.collapse", { name: title })}
+        accessibilityState={{ expanded: !collapsed }}
+        {...sidebarNavProps({ pgNav: "" })}
         onPress={toggle}
         style={styles.header}
       >
@@ -612,11 +617,19 @@ export function WorkspaceRow({
   indent,
   view,
   onMenu,
+  relation,
 }: {
   reference: WorkspaceRef;
   indent: number;
   view: PluginSidebarViewProps;
   onMenu: (reference: WorkspaceRef) => void;
+  relation?: {
+    key: string;
+    highlighted: boolean;
+    open(): void;
+    onHover(hovered: boolean): void;
+    trailing: ReactNode;
+  };
 }) {
   const look = useLook();
   const styles = useRowStyles(view.theme);
@@ -651,16 +664,21 @@ export function WorkspaceRow({
     ) : null;
   return (
     <Pressable
+      {...sidebarNavProps({ pgNav: "", ...(relation ? { pgAgent: relation.key } : {}) })}
       accessibilityRole="button"
+      accessibilityState={{ selected: active }}
       accessibilityLabel={
         workspace.indicatorLabel
           ? t("workspace.openWithStatus", { name: workspace.title, status: workspace.indicatorLabel })
           : t("workspace.open", { name: workspace.title })
       }
-      onPress={open}
-      onHoverIn={hover.onHoverIn}
-      onHoverOut={hover.onHoverOut}
-      style={[styles.row, styles.rounded, { paddingLeft: indent }, active ? styles.selected : null]}
+      onPress={relation?.open ?? open}
+      onHoverIn={() => { hover.onHoverIn(); relation?.onHover(true); }}
+      onHoverOut={() => { hover.onHoverOut(); relation?.onHover(false); }}
+      style={[
+        styles.row, styles.rounded, { paddingLeft: indent },
+        active ? styles.selected : relation?.highlighted && { backgroundColor: view.theme.colors.surface1 },
+      ]}
     >
       {look.showStatusDots ? <StatusDot color={color} running={workspace.indicator === "running"} /> : null}
       <View style={{ flex: 1, minWidth: 0, paddingVertical: branch || labels.length ? 3 : 0 }}>
@@ -679,6 +697,7 @@ export function WorkspaceRow({
           <MetaLine hostId={reference.hostId} branch={branch} labels={labels} theme={view.theme} />
         ) : null}
       </View>
+      {relation?.trailing}
       <RowActions show={hover.show} slots={1} iconSize={look.icon} detail={trailing}>
         <ActionButton
           icon="Ellipsis"
@@ -768,7 +787,7 @@ export function ProjectBlock({
   view,
   onToggle,
   onMenu,
-  onWorkspaceMenu,
+  renderWorkspace,
   hostLabel = null,
   children,
 }: {
@@ -783,7 +802,7 @@ export function ProjectBlock({
   view: PluginSidebarViewProps;
   onToggle: (key: string) => void;
   onMenu: (reference: ProjectRef) => void;
-  onWorkspaceMenu: (reference: WorkspaceRef) => void;
+  renderWorkspace: (workspace: WorkspaceRef, indent: number) => ReactNode;
   /** Host name shown after the project name when several hosts are connected; null hides it. */
   hostLabel?: string | null;
   /** Sub-project blocks, hidden while folded. */
@@ -840,6 +859,8 @@ export function ProjectBlock({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={t(collapsed ? "common.expand" : "common.collapse", { name })}
+          accessibilityState={{ expanded: !collapsed }}
+          {...sidebarNavProps({ pgNav: "" })}
           accessibilityHint={t("project.dragHint")}
           onPress={toggle}
           onLongPress={handle.onLongPress}
@@ -911,15 +932,7 @@ export function ProjectBlock({
       </View>
       {collapsed
         ? null
-        : workspaces.map((workspace) => (
-            <WorkspaceRow
-              key={workspace.key}
-              reference={workspace}
-              indent={look.workspaceIndent + shift}
-              view={view}
-              onMenu={onWorkspaceMenu}
-            />
-          ))}
+        : workspaces.map((workspace) => renderWorkspace(workspace, look.workspaceIndent + shift))}
       {collapsed ? null : children}
     </View>
   );
@@ -955,10 +968,10 @@ export function TextButton({
       accessibilityRole="button"
       accessibilityLabel={label}
       onPress={onPress}
-      style={[styles.row, styles.rounded, { paddingLeft: 8, paddingRight: 8 }]}
+      style={[styles.row, styles.rounded, { paddingLeft: 8, paddingRight: 8, minWidth: 0 }]}
     >
       <Icon name={icon} size={look.icon} color={muted} />
-      <Text selectable={false} style={styles.detail}>
+      <Text selectable={false} numberOfLines={1} style={[styles.detail, { flexShrink: 1 }]}>
         {label}
       </Text>
     </Pressable>
