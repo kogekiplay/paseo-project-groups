@@ -9,7 +9,7 @@ import {
 } from "@getpaseo/plugin/client";
 import { Icon, TextInput } from "@getpaseo/plugin/client/ui";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Platform, Pressable, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { useDrag, useDragHandle, useDragSlot } from "./drag";
 import { DecorIcon, useDecorations } from "./decor";
 import { useT } from "./i18n";
@@ -472,14 +472,7 @@ export function StatusDot({ color, running = false }: { color: string; running?:
   return (
     <View
       pointerEvents="none"
-      style={{
-        width: 12,
-        height: 12,
-        flexShrink: 0,
-        alignItems: "center",
-        justifyContent: "center",
-        transform: Platform.OS === "ios" ? [{ translateY: -3 }] : undefined,
-      }}
+      style={{ width: 12, height: 12, flexShrink: 0, alignItems: "center", justifyContent: "center" }}
     >
       {running ? (
         <RunningSpinner color={color} size={12} />
@@ -662,6 +655,7 @@ export function WorkspaceRow({
     ) : look.trailing === "timestamp" && workspace.enteredAt ? (
       <TimeAgo iso={workspace.enteredAt} style={styles.detail} />
     ) : null;
+  const { flex: _fill, ...titleStyle } = styles.workspaceName;
   return (
     <Pressable
       {...sidebarNavProps({ pgNav: "", ...(relation ? { pgAgent: relation.key } : {}) })}
@@ -686,7 +680,7 @@ export function WorkspaceRow({
           selectable={false}
           numberOfLines={1}
           style={[
-            styles.workspaceName,
+            titleStyle,
             nameColor ? { color: nameColor } : null,
             active || hover.hovered ? { opacity: 1 } : null,
           ]}
