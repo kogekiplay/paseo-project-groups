@@ -4,7 +4,7 @@ import { Platform, View, type ScrollView } from "react-native";
 import type { activeFamily } from "./relationship-model";
 
 type Family = ReturnType<typeof activeFamily>;
-type Anchor = { center: number; top: number };
+type Anchor = { center: number; top: number; bottom: number };
 export interface RailChildPoint {
   readonly key: string;
   readonly y: number;
@@ -23,8 +23,8 @@ interface MeasurableNode {
   ) => void;
   measureInWindow?: (callback: (x: number, y: number, width: number, height: number) => void) => void;
   getBoundingClientRect?: () => { top: number; height: number };
-  querySelector?: (selector: string) => { focus?: () => void } | null;
-  focus?: () => void;
+  querySelector?: (selector: string) => { focus?: (options?: { preventScroll?: boolean }) => void } | null;
+  focus?: (options?: { preventScroll?: boolean }) => void;
 }
 
 const RAIL_X = 6;
@@ -32,6 +32,7 @@ const RAIL_STROKE = 1.5;
 const RAIL_ELBOW_WIDTH = 11;
 const RAIL_RADIUS = 5;
 const EPSILON = 0.5;
+const SCROLL_MARGIN = 8;
 
 type FrameHandle = { kind: "raf"; id: number } | { kind: "timer"; id: ReturnType<typeof setTimeout> };
 
@@ -73,7 +74,7 @@ async function measureRelative(node: MeasurableNode, container: MeasurableNode):
         node.measureLayout!(
           container,
           (_x, y, _width, height) => {
-            resolve(height > 0 ? { center: y + height / 2, top: y } : null);
+            resolve(height > 0 ? { center: y + height / 2, top: y, bottom: y + height } : null);
           },
           () => resolve(null),
         );
@@ -88,7 +89,7 @@ async function measureRelative(node: MeasurableNode, container: MeasurableNode):
     const [childRect, hostRect] = await Promise.all([measureInWindowOf(node), measureInWindowOf(container)]);
     if (childRect && hostRect && childRect.height > 0) {
       const top = childRect.y - hostRect.y;
-      return { center: top + childRect.height / 2, top };
+      return { center: top + childRect.height / 2, top, bottom: top + childRect.height };
     }
   }
 
@@ -97,7 +98,7 @@ async function measureRelative(node: MeasurableNode, container: MeasurableNode):
     const hostRect = container.getBoundingClientRect();
     if (childRect.height > 0) {
       const top = childRect.top - hostRect.top;
-      return { center: top + childRect.height / 2, top };
+      return { center: top + childRect.height / 2, top, bottom: top + childRect.height };
     }
   }
 
@@ -131,7 +132,20 @@ function samePoints(left: RailPoints | null, right: RailPoints | null): boolean 
 function focusAnchorOnWeb(node: MeasurableNode) {
   if (Platform.OS !== "web") return;
   const focusable = node.querySelector?.("[data-pg-nav]") ?? node;
-  focusable.focus?.();
+  focusable.focus?.({ preventScroll: true });
+}
+
+/**
+ * Compute the minimal scroll offset to bring `point` into `[scrollY, scrollY + viewportHeight]`,
+ * or `null` when it is already visible inside the viewport.
+ */
+function minimalScrollTarget(point: Anchor, scrollY: number, viewportHeight: number, wasCollapsed: boolean): number | null {
+  if (viewportHeight > 0) {
+    if (point.top >= scrollY && point.bottom <= scrollY + viewportHeight) return null;
+    if (point.top < scrollY) return Math.max(0, point.top - SCROLL_MARGIN);
+    return Math.max(0, point.bottom - viewportHeight + SCROLL_MARGIN);
+  }
+  return wasCollapsed ? Math.max(0, point.top - SCROLL_MARGIN) : null;
 }
 
 export function useRelationshipRail(
@@ -140,11 +154,13 @@ export function useRelationshipRail(
   scroll: RefObject<ScrollView | null>,
 ) {
   const nodes = useRef(new Map<string, View>());
-  const focusTarget = useRef<{ key: string; focus: boolean; id: number } | null>(null);
+  const focusTarget = useRef<{ key: string; focus: boolean; wasCollapsed: boolean; id: number } | null>(null);
   const frame = useRef<FrameHandle | null>(null);
   const request = useRef(0);
   const revealId = useRef(0);
   const mounted = useRef(true);
+  const scrollYRef = useRef(0);
+  const viewportHeightRef = useRef(0);
   const familyRef = useRef<Family>(family);
   familyRef.current = family;
   const pointsRef = useRef<RailPoints | null>(null);
@@ -175,7 +191,10 @@ export function useRelationshipRail(
         void measure(target.key).then((point) => {
           if (!mounted.current || !point || focusTarget.current?.id !== target.id) return;
           focusTarget.current = null;
-          scroll.current?.scrollTo({ y: Math.max(0, point.top - 12), animated: false });
+          const nextY = minimalScrollTarget(point, scrollYRef.current, viewportHeightRef.current, target.wasCollapsed);
+          if (nextY !== null) {
+            scroll.current?.scrollTo({ y: nextY, animated: false });
+          }
           if (target.focus) {
             const node = nodes.current.get(target.key) as MeasurableNode | undefined;
             if (node) focusAnchorOnWeb(node);
@@ -230,12 +249,32 @@ export function useRelationshipRail(
     if (relevant && (node !== null || had)) refresh();
   }, [refresh]);
 
-  const revealAgent = useCallback((key: string, options?: { focus?: boolean }) => {
-    focusTarget.current = { key, focus: options?.focus ?? false, id: ++revealId.current };
+  const revealAgent = useCallback((key: string, options?: { focus?: boolean; wasCollapsed?: boolean }) => {
+    focusTarget.current = {
+      key,
+      focus: options?.focus ?? false,
+      wasCollapsed: options?.wasCollapsed ?? false,
+      id: ++revealId.current,
+    };
     refresh();
   }, [refresh]);
 
-  return { register, refresh, revealAgent, points: points && sameFamily(points.family, family) ? points : null };
+  const onScroll = useCallback((y: number) => {
+    scrollYRef.current = y;
+  }, []);
+
+  const onViewportHeight = useCallback((height: number) => {
+    viewportHeightRef.current = height;
+  }, []);
+
+  return {
+    register,
+    refresh,
+    revealAgent,
+    onScroll,
+    onViewportHeight,
+    points: points && sameFamily(points.family, family) ? points : null,
+  };
 }
 
 export function RelationshipRail({

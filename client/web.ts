@@ -84,11 +84,9 @@ export function bindSidebarKeys(
       const next = items[items.indexOf(row) + (key === "ArrowUp" ? -1 : 1)];
       if (next) action = () => next.focus();
     } else if (key === "ArrowLeft" || key === "ArrowRight") {
-      const fold =
-        row.getAttribute("aria-expanded") !== null
-          ? row
-          : (row.querySelector("[data-pg-fold]") ?? row.closest?.("[data-pg-row]")?.querySelector?.("[data-pg-fold]"));
-      if (fold?.getAttribute("aria-expanded") === (key === "ArrowLeft" ? "true" : "false")) action = () => fold.click();
+      if (row.getAttribute("aria-expanded") === (key === "ArrowLeft" ? "true" : "false")) {
+        action = () => row.click();
+      }
     } else if (agent) {
       const direction = key.toLowerCase() === "p" ? "parent" : key === "[" ? "previous" : key === "]" ? "next" : null;
       if (direction && jump(agent, direction)) action = () => {};

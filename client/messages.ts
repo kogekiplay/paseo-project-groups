@@ -40,9 +40,6 @@ const en = {
     count_other: "{{count}}",
     children_one: "1 child agent",
     children_other: "{{count}} child agents",
-    parent: "Parent {{name}}",
-    child: "Child {{name}}",
-    sibling: "Sibling {{name}}",
   },
   group: {
     defaultName: "Group {{number}}",
@@ -263,9 +260,6 @@ const ko = {
     empty: "표시할 에이전트가 없습니다.",
     count_other: "{{count}}",
     children_other: "하위 에이전트 {{count}}개",
-    parent: "상위 {{name}}",
-    child: "하위 {{name}}",
-    sibling: "같은 상위 {{name}}",
   },
   group: {
     defaultName: "그룹 {{number}}",
@@ -474,9 +468,6 @@ const zhCN = {
     empty: "暂无 Agent",
     count_other: "{{count}} 子",
     children_other: "{{count}} 个子 Agent",
-    parent: "父 {{name}}",
-    child: "子 {{name}}",
-    sibling: "同父 {{name}}",
   },
   group: {
     defaultName: "分组 {{number}}",

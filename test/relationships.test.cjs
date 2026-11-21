@@ -80,6 +80,7 @@ function createLoader(overrides = {}, globals = {}) {
 }
 
 const ref = (kind, hostId, id) => ({ kind, hostId, id, key: `${hostId}:${id}` });
+const plain = (value) => JSON.parse(JSON.stringify(value));
 
 function textOf(node) {
   if (node == null || typeof node === "boolean") return "";
@@ -111,6 +112,7 @@ function makeHarness({
   const openedWorkspaces = [];
   const savedLayouts = [];
   const scrollCalls = [];
+  const keyListeners = [];
 
   let currentCollapsed = [...collapsed];
   let layoutRevision = 1;
@@ -150,7 +152,6 @@ function makeHarness({
     return [...grouped.entries()].map(([key, items]) => ({ key, title: null, color: null, items }));
   }
 
-  const AnimatedView = "AnimatedView";
   const rn = {
     Platform: { OS: platform },
     View: "View",
@@ -161,7 +162,7 @@ function makeHarness({
     ScrollView: "ScrollView",
     Easing: { linear: (v) => v },
     Animated: {
-      View: AnimatedView,
+      View: "AnimatedView",
       Value: class {
         constructor(v) { this.value = v; }
         interpolate() { return "0deg"; }
@@ -178,8 +179,6 @@ function makeHarness({
       ...config,
       message: (key) => ({ key }),
     }),
-    defineSettings: (config) => config,
-    defineRpc: (config) => config,
     useTranslation: () => ({ locale }),
     useSettings: (doc) => {
       if (doc.id === "groups") {
@@ -315,13 +314,21 @@ function makeHarness({
   };
 
   let renderer;
+  let viewCounter = 0;
   const createNodeMock = (element) => {
     if (element.type === "ScrollView") {
       return { scrollTo: (opts) => scrollCalls.push(opts) };
     }
     if (element.type === "View") {
+      const y = (viewCounter++) * 32;
       return {
-        measureLayout: (_relative, onSuccess) => onSuccess(0, 40, 280, 28),
+        measureLayout: (_relative, onSuccess) => onSuccess(0, y, 280, 28),
+        addEventListener: (_type, fn) => keyListeners.push(fn),
+        removeEventListener: (_type, fn) => {
+          const idx = keyListeners.indexOf(fn);
+          if (idx >= 0) keyListeners.splice(idx, 1);
+        },
+        querySelectorAll: () => [],
       };
     }
     return {};
@@ -340,9 +347,27 @@ function makeHarness({
       });
       return renderer;
     },
-    setActive(next) {
-      viewProps = { ...viewProps, active: { ...viewProps.active, ...next } };
-      act(() => renderer.update(renderTree()));
+    fireKeyOnAgent(agentKey, key) {
+      const row = {
+        getAttribute: (attr) => (attr === "data-pg-agent" ? agentKey : null),
+        closest: (sel) => (sel === "[data-pg-nav]" ? row : null),
+      };
+      let prevented = false;
+      for (const fn of [...keyListeners]) {
+        fn({
+          target: row,
+          key,
+          isComposing: false,
+          defaultPrevented: false,
+          altKey: false,
+          ctrlKey: false,
+          metaKey: false,
+          shiftKey: false,
+          preventDefault: () => { prevented = true; },
+          stopPropagation: () => {},
+        });
+      }
+      return prevented;
     },
     unmount() {
       act(() => renderer.unmount());
@@ -462,7 +487,6 @@ test("relationship-model orders connected families before standalone agents and 
     { key: `a:${c1.key}`, items: [g1] },
   ]);
 
-  const plain = (value) => JSON.parse(JSON.stringify(value));
   const rows = plain(model.relationshipRows(rel));
   assert.deepEqual(rows.map((r) => r.agent.id), ["root", "c1", "g1", "c2", "solo"]);
   assert.deepEqual(rows.map((r) => r.depth), [0, 1, 2, 1, 0]);
@@ -472,7 +496,7 @@ test("relationship-model orders connected families before standalone agents and 
   assert.equal(model.activeFamily(rel, solo.key), null);
 });
 
-test("cross-project parent-child, drawer full project names, and real cross-host WorkspaceRef subscriptions", (t) => {
+test("project view keeps workspace rows as the single entry without duplicate drawers/chips and never scrolls on click", async (t) => {
   const data = sampleCrossProjectData();
   const harness = makeHarness({
     projects: data.projects,
@@ -485,7 +509,7 @@ test("cross-project parent-child, drawer full project names, and real cross-host
   const renderer = harness.mount();
   t.after(() => harness.unmount());
 
-  // Every useWorkspace call must receive a real WorkspaceRef object (never a composite key string).
+  // Every useWorkspace call receives a real host-scoped WorkspaceRef object.
   assert.ok(harness.workspaceRefCalls.length > 0);
   for (const call of harness.workspaceRefCalls) {
     assert.equal(typeof call, "object", `useWorkspace received string instead of WorkspaceRef: ${String(call)}`);
@@ -497,38 +521,35 @@ test("cross-project parent-child, drawer full project names, and real cross-host
     "cross-host child workspace subscribed via host-b WorkspaceRef",
   );
 
-  // Selected child row renders quick-jump buttons for parent and cross-host sibling,
-  // while unselected child row shows a quiet trailing parent cue ("MOM CLI").
-  const parentButtons = renderer.root.findAllByProps({ accessibilityLabel: "父 MOM CLI", accessibilityRole: "button" });
-  assert.equal(parentButtons.length, 2, "quick-jump on selected child + quiet parent cue on unselected sibling");
-  const parentJump = parentButtons.find((btn) => textOf(btn) === "父 MOM CLI");
-  const quietParentCue = parentButtons.find((btn) => textOf(btn) === "MOM CLI");
-  assert.ok(parentJump, "selected row shows full parent jump label");
-  assert.ok(quietParentCue, "unselected sibling shows compact parent cue");
-  const siblingJump = renderer.root.findByProps({ accessibilityLabel: "同父 MOM 权限工作台", accessibilityRole: "button" });
-  assert.equal(flattenStyle(parentJump.props.style).borderColor, theme.colors.accent);
-  assert.equal(flattenStyle(quietParentCue.props.style).borderColor, theme.colors.border);
-  assert.equal(flattenStyle(siblingJump.props.style).borderColor, theme.colors.border);
+  // No duplicate parent/child jump pills or expandable drawer buttons exist in project view.
+  const allButtons = renderer.root.findAllByProps({ accessibilityRole: "button" });
+  const duplicateJumpButtons = allButtons.filter((btn) =>
+    /^(父|子|同父)\s/.test(String(btn.props.accessibilityLabel ?? "")),
+  );
+  assert.equal(duplicateJumpButtons.length, 0, "no inline quick-jump pills or duplicate entry buttons");
+  assert.equal(
+    renderer.root.findAllByProps({ accessibilityLabel: "2 个子 Agent", accessibilityRole: "button" }).length,
+    0,
+    "parent count badge must not be an expandable drawer toggle",
+  );
 
-  // Clicking parent subcount pill opens drawer with full readable project names (not truncated to 45%).
-  const subcountBtn = renderer.root.findByProps({ accessibilityLabel: "2 个子 Agent", accessibilityRole: "button" });
-  assert.equal(subcountBtn.props.accessibilityState.expanded, false);
-  act(() => subcountBtn.props.onPress({ stopPropagation() {} }));
+  // Parent row still shows a quiet non-interactive count badge and related rows get surface1 highlight.
+  const countBadge = renderer.root.findByProps({ accessibilityLabel: "2 个子 Agent", accessibilityRole: "text" });
+  assert.equal(textOf(countBadge), "2 子");
+  const parentRow = renderer.root.findByProps({ accessibilityLabel: "打开MOM CLI", accessibilityRole: "button" });
+  assert.equal(flattenStyle(parentRow.props.style).backgroundColor, theme.colors.surface1);
 
-  const expandedBtn = renderer.root.findByProps({ accessibilityLabel: "2 个子 Agent", accessibilityRole: "button" });
-  assert.equal(expandedBtn.props.accessibilityState.expanded, true);
-  assert.equal(flattenStyle(expandedBtn.props.style).backgroundColor, theme.colors.accent);
-
-  const drawerItem = renderer.root.findByProps({
-    accessibilityLabel: "MOM 权限工作台 (mom-permission-workbench)",
-    accessibilityRole: "button",
+  // Clicking an already-visible workspace row opens the agent WITHOUT calling scrollTo or changing folds.
+  await act(async () => {
+    parentRow.props.onPress();
+    await new Promise((r) => setTimeout(r, 15));
   });
-  assert.ok(textOf(drawerItem).includes("mom-permission-workbench"));
-  act(() => drawerItem.props.onPress({ stopPropagation() {} }));
-  assert.deepEqual(harness.openedAgents, [data.refs.aPerm]);
+  assert.deepEqual(harness.openedAgents, [data.refs.aCli]);
+  assert.equal(harness.scrollCalls.length, 0, "clicking an existing row must not scroll the sidebar");
+  assert.equal(harness.savedLayouts.length, 0, "clicking an existing row must not alter fold state");
 });
 
-test("jumping to a parent or sibling inside a collapsed group and project unfolds them automatically", async (t) => {
+test("keyboard jump unfolds a collapsed group and project and minimally scrolls to reveal it", async (t) => {
   const data = sampleCrossProjectData();
   const harness = makeHarness({
     projects: data.projects,
@@ -538,7 +559,6 @@ test("jumping to a parent or sibling inside a collapsed group and project unfold
       { id: "parent-grp", name: "Parent Group", projects: [data.refs.pCli.key] },
       { id: "child-grp", name: "Child Group", projects: [data.refs.pRep.key, data.refs.pPerm.key] },
     ],
-    // Parent group, parent project, and sibling's project are all collapsed!
     collapsed: ["g:parent-grp", `p:${data.refs.pCli.key}`, `p:${data.refs.pPerm.key}`],
     activeAgent: data.refs.aRep,
     activeWorkspace: data.refs.wRep,
@@ -546,9 +566,8 @@ test("jumping to a parent or sibling inside a collapsed group and project unfold
   const renderer = harness.mount();
   t.after(() => harness.unmount());
 
-  const parentJump = renderer.root.findByProps({ accessibilityLabel: "父 MOM CLI", accessibilityRole: "button" });
   await act(async () => {
-    parentJump.props.onPress({ stopPropagation() {} });
+    assert.equal(harness.fireKeyOnAgent(data.refs.aRep.key, "p"), true);
   });
   await act(async () => {
     await new Promise((r) => setTimeout(r, 15));
@@ -561,10 +580,10 @@ test("jumping to a parent or sibling inside a collapsed group and project unfold
     renderer.root.findByProps({ accessibilityLabel: "打开MOM CLI", accessibilityRole: "button" }),
     "unfolded parent workspace row is now mounted",
   );
-  assert.ok(harness.scrollCalls.length >= 1, "jumping reveals the target row in the scroll view");
+  assert.ok(harness.scrollCalls.length >= 1, "jumping to a collapsed target scrolls to reveal it");
 });
 
-test("same-workspace subagent tabs are hidden from both views, counts, quick-jump, rail, and keyboard nav", (t) => {
+test("same-workspace subagent tabs are hidden from both views, counts, rail, and keyboard nav", (t) => {
   const pGroups = ref("project", "host-a", "paseo-project-groups");
   const pCross = ref("project", "host-b", "cross-project");
   const wMain = ref("workspace", "host-a", "ws-1");
@@ -611,7 +630,7 @@ test("same-workspace subagent tabs are hidden from both views, counts, quick-jum
   t.after(() => harness.unmount());
 
   // Project view: no duplicate parent row, same-workspace subagent tabs never appear,
-  // and child count only counts the cross-host/cross-workspace child (1, not 3!).
+  // and child count only counts the cross-host/cross-workspace child (1, not 3).
   const projectText = textOf(renderer.toJSON());
   assert.ok(!projectText.includes("同窗口子标签"), "same-workspace subagent tab must not appear in project view");
   assert.ok(!projectText.includes("同窗口孙标签"), "same-workspace grandchild tab must not appear in project view");
@@ -620,16 +639,14 @@ test("same-workspace subagent tabs are hidden from both views, counts, quick-jum
     1,
     "workspace row must not duplicate its parent agent underneath",
   );
-  const subcount = renderer.root.findByProps({ accessibilityLabel: "1 个子 Agent", accessibilityRole: "button" });
-  assert.equal(textOf(subcount), "1 子");
-  assert.ok(
-    renderer.root.findByProps({ accessibilityLabel: "子 远端跨工作区子 Agent", accessibilityRole: "button" }),
-    "same workspace ID on another host stays a cross-workspace child",
-  );
+  const countBadge = renderer.root.findByProps({ accessibilityLabel: "1 个子 Agent", accessibilityRole: "text" });
+  assert.equal(textOf(countBadge), "1 子");
 
-  // Opening drawer also excludes same-workspace tabs.
-  act(() => subcount.props.onPress({ stopPropagation() {} }));
-  assert.ok(!textOf(renderer.toJSON()).includes("同窗口子标签"));
+  // Keyboard `]` from parent jumps directly to the cross-host child, skipping same-workspace tabs.
+  act(() => {
+    assert.equal(harness.fireKeyOnAgent(aRoot.key, "]"), true);
+  });
+  assert.deepEqual(harness.openedAgents, [aCrossHostChild]);
 
   // Switch to "按关系" view: same-workspace subagent tabs remain absent; cross-host child stays linked.
   const relToggle = renderer.root.findByProps({ accessibilityLabel: "按关系", accessibilityRole: "button" });
@@ -691,39 +708,31 @@ test("same workspace with multiple true root agents keeps a single workspace row
   act(() => multiWsBtn.props.onPress());
   assert.deepEqual(harness.openedWorkspaces, [w1]);
 
-  // Agent whose parent is absent from visible agents keeps its normal WorkspaceRow and default navigation (no fabricated parent).
+  // Missing parent keeps normal WorkspaceRow & default navigation without fabricating a relationship.
   const orphanWsBtn = renderer.root.findByProps({ accessibilityLabel: "打开Orphan WS", accessibilityRole: "button" });
-  assert.equal(
-    renderer.root.findAll((n) => n.props?.accessibilityRole === "button" && String(n.props.accessibilityLabel ?? "").startsWith("父 ")).length,
-    0,
-    "missing parent must not render a fabricated parent jump button",
-  );
+  assert.equal(harness.fireKeyOnAgent(aOrphan.key, "p"), false, "missing parent must not navigate");
   act(() => orphanWsBtn.props.onPress());
   assert.deepEqual(harness.openedWorkspaces, [w1, wOrphan]);
   assert.deepEqual(harness.openedAgents, []);
+  assert.equal(harness.scrollCalls.length, 0);
 });
 
-test("By relation view displays tree hierarchy with full readable project names and single-agent active fallback", (t) => {
+test("By relation view displays clickable tree rows with full project names, no duplicate jump strip, and no scroll on click", async (t) => {
   const data = sampleCrossProjectData();
   const harness = makeHarness({
     projects: data.projects,
     workspaces: data.workspaces,
     agents: data.agents,
     groups: data.groups,
-    // Simulate host providing active.workspace without active.agent on a single-agent workspace.
     activeAgent: null,
     activeWorkspace: data.refs.wRep,
   });
   const renderer = harness.mount();
   t.after(() => harness.unmount());
 
-  // Single-agent workspace fallback still renders the quick-jump strip!
-  const parentButtons = renderer.root.findAllByProps({ accessibilityLabel: "父 MOM CLI", accessibilityRole: "button" });
-  assert.ok(parentButtons.some((btn) => textOf(btn) === "父 MOM CLI"));
-
-  // Switch to "按关系" view.
   const relToggle = renderer.root.findByProps({ accessibilityLabel: "按关系", accessibilityRole: "button" });
   act(() => relToggle.props.onPress());
+  harness.scrollCalls.length = 0;
 
   const treeText = textOf(renderer.toJSON());
   assert.ok(treeText.includes("MOM CLI"));
@@ -731,9 +740,22 @@ test("By relation view displays tree hierarchy with full readable project names 
   assert.ok(treeText.includes("MOM 权限工作台"));
   assert.ok(treeText.includes("mom-permission-workbench"), "full project name visible in relation tree");
   assert.ok(treeText.includes("+33537"), "diff stats visible in relation tree");
+
+  // Single-agent workspace fallback still highlights MOM报表 as selected in relation tree.
+  const repRow = renderer.root.findByProps({ accessibilityLabel: "打开MOM报表", accessibilityRole: "button" });
+  assert.equal(repRow.props.accessibilityState.selected, true);
+
+  // Clicking a tree row opens the agent directly without scrolling.
+  const permRow = renderer.root.findByProps({ accessibilityLabel: "打开MOM 权限工作台", accessibilityRole: "button" });
+  await act(async () => {
+    permRow.props.onPress();
+    await new Promise((r) => setTimeout(r, 15));
+  });
+  assert.deepEqual(harness.openedAgents, [data.refs.aPerm]);
+  assert.equal(harness.scrollCalls.length, 0, "clicking a tree row must not call scrollTo");
 });
 
-test("useRelationshipRail supports measureLayout, measureInWindow fallback, measurement stability, and web focus", async (t) => {
+test("useRelationshipRail supports measureLayout, measureInWindow fallback, stability, and viewport-aware minimal scroll", async (t) => {
   const load = createLoader({
     "react-native": { Platform: { OS: "web" }, View: "View" },
   });
@@ -747,12 +769,12 @@ test("useRelationshipRail supports measureLayout, measureInWindow fallback, meas
   let renders = 0;
   let hookApi;
   let useFallback = false;
-  let focused = 0;
+  const focusCalls = [];
   const scrolled = [];
 
   const contentRef = {
     current: {
-      measureInWindow: (cb) => cb(0, 100, 280, 400),
+      measureInWindow: (cb) => cb(0, 100, 280, 600),
     },
   };
   const scrollRef = {
@@ -779,10 +801,12 @@ test("useRelationshipRail supports measureLayout, measureInWindow fallback, meas
       onOk(0, relY, 260, height);
     },
     measureInWindow: (cb) => cb(0, 100 + relY, 260, height),
-    querySelector: () => ({ focus: () => { focused += 1; } }),
+    querySelector: () => ({ focus: (opts) => focusCalls.push(opts) }),
   });
 
   await act(async () => {
+    hookApi.onViewportHeight(300);
+    hookApi.onScroll(0);
     hookApi.register(parent.key, makeNode(80));
     hookApi.register(childAbove.key, makeNode(20));
     hookApi.register(childBelow.key, makeNode(160));
@@ -805,34 +829,47 @@ test("useRelationshipRail supports measureLayout, measureInWindow fallback, meas
   });
   assert.equal(renders, settledRenders, "identical measurements must not trigger re-renders");
 
-  // Fallback check: when measureLayout fails, measureInWindow delta produces the exact same points.
-  useFallback = true;
-  await act(async () => {
-    hookApi.register(childBelow.key, makeNode(180));
-    await new Promise((r) => setTimeout(r, 15));
-  });
-  assert.equal(hookApi.points.children[1].y, 194);
-
-  // revealAgent scrolls and focuses on web.
+  // Already-visible target in viewport [0, 300]: focus with preventScroll, NO scrollTo!
   await act(async () => {
     hookApi.revealAgent(childBelow.key, { focus: true });
     await new Promise((r) => setTimeout(r, 15));
   });
-  assert.equal(scrolled.at(-1).y, 168);
-  assert.equal(scrolled.at(-1).animated, false);
-  assert.equal(focused, 1);
+  assert.equal(scrolled.length, 0, "target already inside viewport must not scroll");
+  assert.equal(focusCalls.length, 1);
+  assert.equal(focusCalls[0].preventScroll, true);
+
+  // Target below viewport [0, 300] (y=420, bottom=448): minimal scroll to 448 - 300 + 8 = 156.
+  useFallback = true;
+  await act(async () => {
+    hookApi.register(childBelow.key, makeNode(420));
+    hookApi.revealAgent(childBelow.key, { focus: true });
+    await new Promise((r) => setTimeout(r, 15));
+  });
+  assert.equal(hookApi.points.children[1].y, 434);
+  assert.equal(scrolled.length, 1);
+  assert.equal(scrolled[0].y, 156);
+  assert.equal(scrolled[0].animated, false);
+
+  // Target above viewport [200, 500] (y=20): minimal scroll to 20 - 8 = 12.
+  await act(async () => {
+    hookApi.onScroll(200);
+    hookApi.revealAgent(childAbove.key, { focus: true });
+    await new Promise((r) => setTimeout(r, 15));
+  });
+  assert.equal(scrolled.length, 2);
+  assert.equal(scrolled[1].y, 12);
 
   // Zero-height (hidden/collapsed) nodes are excluded rather than drawing dangling elbows.
   await act(async () => {
     hookApi.register(childAbove.key, makeNode(20, 0));
-    hookApi.register(childBelow.key, makeNode(180, 0));
+    hookApi.register(childBelow.key, makeNode(420, 0));
     await new Promise((r) => setTimeout(r, 15));
   });
   assert.equal(hookApi.points.children.length, 0);
   assert.equal(renderer.toJSON(), null);
 });
 
-test("bindSidebarKeys handles Arrow nav, AgentRow fold lookup, P/[/], and ignores IME & text inputs", () => {
+test("bindSidebarKeys handles Arrow nav, group/project fold, P/[/], and ignores IME & text inputs", () => {
   const load = createLoader({ "react-native": { Platform: { OS: "web" } } });
   const { bindSidebarKeys } = load("client/web.ts");
 
@@ -841,28 +878,23 @@ test("bindSidebarKeys handles Arrow nav, AgentRow fold lookup, P/[/], and ignore
   let foldClicks = 0;
   const jumps = [];
 
-  const foldBtn = {
+  const groupRow = {
     getAttribute: (attr) => (attr === "aria-expanded" ? "false" : null),
+    getClientRects: () => [{}],
+    focus: () => { focusedItem = "group"; },
     click: () => { foldClicks += 1; },
+    closest: (sel) => (sel === "[data-pg-nav]" ? groupRow : null),
   };
-  const row1 = {
+  const agentRow = {
     getAttribute: (attr) => (attr === "data-pg-agent" ? "h1:a1" : null),
     getClientRects: () => [{}],
-    focus: () => { focusedItem = "row1"; },
-    querySelector: () => null,
-    closest: (sel) => (sel === "[data-pg-nav]" ? row1 : sel === "[data-pg-row]" ? { querySelector: () => foldBtn } : null),
-  };
-  const row2 = {
-    getAttribute: (attr) => (attr === "data-pg-agent" ? "h1:a2" : null),
-    getClientRects: () => [{}],
-    focus: () => { focusedItem = "row2"; },
-    querySelector: () => null,
-    closest: (sel) => (sel === "[data-pg-nav]" ? row2 : null),
+    focus: () => { focusedItem = "agent"; },
+    closest: (sel) => (sel === "[data-pg-nav]" ? agentRow : null),
   };
   const root = {
     addEventListener: (_type, fn) => { handler = fn; },
     removeEventListener: () => { handler = null; },
-    querySelectorAll: () => [row1, row2],
+    querySelectorAll: () => [groupRow, agentRow],
   };
 
   const cleanup = bindSidebarKeys(root, (agent, direction) => {
@@ -870,10 +902,10 @@ test("bindSidebarKeys handles Arrow nav, AgentRow fold lookup, P/[/], and ignore
     return true;
   });
 
-  const fire = (overrides) => {
+  const fire = (target, overrides) => {
     let prevented = false;
     handler({
-      target: row1,
+      target,
       key: "",
       isComposing: false,
       defaultPrevented: false,
@@ -888,61 +920,25 @@ test("bindSidebarKeys handles Arrow nav, AgentRow fold lookup, P/[/], and ignore
     return prevented;
   };
 
-  assert.equal(fire({ key: "ArrowDown" }), true);
-  assert.equal(focusedItem, "row2");
+  assert.equal(fire(groupRow, { key: "ArrowDown" }), true);
+  assert.equal(focusedItem, "agent");
 
-  // ArrowRight finds sibling [data-pg-fold] inside [data-pg-row] (AgentRow layout).
-  assert.equal(fire({ key: "ArrowRight" }), true);
+  assert.equal(fire(groupRow, { key: "ArrowRight" }), true);
   assert.equal(foldClicks, 1);
 
-  // P / [ / ] jump actions
-  assert.equal(fire({ key: "p" }), true);
-  assert.equal(fire({ key: "]" }), true);
-  assert.equal(fire({ key: "[" }), true);
+  assert.equal(fire(agentRow, { key: "p" }), true);
+  assert.equal(fire(agentRow, { key: "]" }), true);
+  assert.equal(fire(agentRow, { key: "[" }), true);
   assert.deepEqual(jumps, [["h1:a1", "parent"], ["h1:a1", "next"], ["h1:a1", "previous"]]);
 
   // IME composition events and input fields are never intercepted.
-  assert.equal(fire({ key: "p", isComposing: true }), false);
-  assert.equal(fire({ key: "Process" }), false);
-  assert.equal(fire({ key: "p", keyCode: 229 }), false);
-  const inputTarget = { closest: (sel) => (sel.includes("input") ? {} : row1) };
-  assert.equal(fire({ key: "ArrowDown", target: inputTarget }), false);
+  assert.equal(fire(agentRow, { key: "p", isComposing: true }), false);
+  assert.equal(fire(agentRow, { key: "Process" }), false);
+  assert.equal(fire(agentRow, { key: "p", keyCode: 229 }), false);
+  const inputTarget = { closest: (sel) => (sel.includes("input") ? {} : agentRow) };
+  assert.equal(fire(inputTarget, { key: "ArrowDown" }), false);
   assert.equal(jumps.length, 3);
 
   cleanup();
   assert.equal(handler, null);
-});
-
-test("compact mobile layout (375px) enforces touch targets, wrap/shrink safety, and iOS pill spinner alignment", (t) => {
-  const data = sampleCrossProjectData();
-  const harness = makeHarness({
-    platform: "ios",
-    compact: true,
-    projects: data.projects,
-    workspaces: data.workspaces,
-    agents: data.agents,
-    groups: data.groups,
-    activeAgent: data.refs.aRep,
-    activeWorkspace: data.refs.wRep,
-  });
-  const renderer = harness.mount();
-  t.after(() => harness.unmount());
-
-  // Quick-jump buttons have touch-friendly minHeight >= 34 and flexShrink + maxWidth: 100%.
-  const siblingJump = renderer.root.findByProps({ accessibilityLabel: "同父 MOM 权限工作台", accessibilityRole: "button" });
-  const jumpStyle = flattenStyle(siblingJump.props.style);
-  assert.ok(jumpStyle.minHeight >= 34, `expected compact minHeight >= 34, got ${jumpStyle.minHeight}`);
-  assert.equal(jumpStyle.flexShrink, 1);
-  assert.equal(jumpStyle.maxWidth, "100%");
-  assert.equal(jumpStyle.minWidth, 0);
-
-  // Compact jump pill uses RunningSpinner directly (no iOS translateY: -3 wrapper from StatusDot).
-  const shiftedWrappers = siblingJump.findAll(
-    (node) => node.type === "View" && flattenStyle(node.props.style).transform?.some?.((item) => item.translateY === -3),
-  );
-  assert.equal(shiftedWrappers.length, 0, "compact pill spinner must not inherit StatusDot's iOS translateY(-3)");
-
-  // Child count pill has compact touch height >= 28.
-  const subcountBtn = renderer.root.findByProps({ accessibilityLabel: "2 个子 Agent", accessibilityRole: "button" });
-  assert.ok(flattenStyle(subcountBtn.props.style).minHeight >= 28);
 });

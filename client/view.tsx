@@ -391,7 +391,6 @@ function GroupsList(view: PluginSidebarViewProps) {
     orderBy: "pinnedAt",
   });
   const [byRelation, setByRelation] = useState(false);
-  const [expandedParent, setExpandedParent] = useState<string | null>(null);
   const [hoveredAgent, setHoveredAgent] = useState<string | null>(null);
   const visibleWorkspaces = useWorkspaces({
     where: (item) => (look.showBackground || !item.background) && !item.archivingAt,
@@ -429,9 +428,6 @@ function GroupsList(view: PluginSidebarViewProps) {
     () => new Set(family ? [family.parent.key, ...family.children.map((agent) => agent.key)] : []),
     [family],
   );
-  useEffect(() => {
-    if (expandedParent && !relationships.children.get(expandedParent)?.length) setExpandedParent(null);
-  }, [expandedParent, relationships.children]);
 
   const byKey = useMemo(() => new Map(projects.map((project) => [project.key, project])), [projects]);
   const order = useMemo(() => projects.map((project) => project.key), [projects]);
@@ -617,10 +613,21 @@ function GroupsList(view: PluginSidebarViewProps) {
   const contentRef = useRef<View>(null);
   const scrollRef = useRef<NativeScrollView>(null);
   const drag = useDragController(viewportRef, scrollRef, onDrop);
-  const { register, refresh, revealAgent, points } = useRelationshipRail(byRelation ? null : family, contentRef, scrollRef);
+  const { register, refresh, revealAgent, onScroll: onRailScroll, onViewportHeight, points } = useRelationshipRail(
+    byRelation ? null : family,
+    contentRef,
+    scrollRef,
+  );
   useEffect(() => { refresh(); }, [collapsedList, layout, refresh]);
 
-  const openAgent = useCallback((agent: AgentRef, options?: { focus?: boolean }) => {
+  /** Normal click/tap opens the agent directly without disturbing sidebar scroll or folds. */
+  const openAgent = useCallback((agent: AgentRef) => {
+    view.navigation.openAgent(agent);
+  }, [view.navigation]);
+
+  /** Explicit keyboard jump unfolds collapsed sections and minimally scrolls only when off-screen. */
+  const jumpToAgent = useCallback((agent: AgentRef) => {
+    let wasCollapsed = false;
     const workspace = relationships.workspaces.get(agent.key);
     const project = workspace ? workspaceProjects.get(workspace) : undefined;
     if (!byRelation && project) {
@@ -629,17 +636,18 @@ function GroupsList(view: PluginSidebarViewProps) {
       const folds = [`p:${project}`];
       if (containingProject) folds.push(`p:${containingProject}`);
       if (section !== undefined) folds.push(section === null ? ungroupedKeyOf(project) : `g:${section}`);
-      reveal(folds);
+      wasCollapsed = folds.some((foldKey) => collapsed.has(foldKey));
+      if (wasCollapsed) reveal(folds);
     }
-    revealAgent(agent.key, options);
+    revealAgent(agent.key, { focus: true, wasCollapsed });
     view.navigation.openAgent(agent);
-  }, [byRelation, layout, parents, relationships, reveal, revealAgent, ungroupedKeyOf, view.navigation, workspaceProjects]);
+  }, [byRelation, collapsed, layout, parents, relationships, reveal, revealAgent, ungroupedKeyOf, view.navigation, workspaceProjects]);
 
   useEffect(() => bindSidebarKeys(viewportRef.current, (key, direction) => {
     const parent = relationships.parents.get(key);
     if (direction === "parent") {
       if (!parent) return false;
-      openAgent(parent, { focus: true });
+      jumpToAgent(parent);
       return true;
     }
     if (parent) {
@@ -647,14 +655,14 @@ function GroupsList(view: PluginSidebarViewProps) {
       if (!siblings || siblings.length < 2) return false;
       const index = siblings.findIndex((agent) => agent.key === key);
       const step = direction === "next" ? 1 : siblings.length - 1;
-      openAgent(siblings[(index + step) % siblings.length], { focus: true });
+      jumpToAgent(siblings[(index + step) % siblings.length]);
       return true;
     }
     const children = relationships.children.get(key);
     if (!children?.length) return false;
-    openAgent(direction === "next" ? children[0] : children[children.length - 1], { focus: true });
+    jumpToAgent(direction === "next" ? children[0] : children[children.length - 1]);
     return true;
-  }), [openAgent, relationships, groupsState.status, layoutState.status]);
+  }), [jumpToAgent, relationships, groupsState.status, layoutState.status]);
 
   const switchMode = (next: boolean) => {
     if (next === byRelation) return;
@@ -883,9 +891,13 @@ function GroupsList(view: PluginSidebarViewProps) {
         : null;
 
   const sidebar: RelationshipActions = {
-    view, model: relationships, highlighted, expanded: expandedParent,
-    open: openAgent, toggle: (key) => setExpandedParent((current) => current === key ? null : key),
-    hover: setHoveredAgent, register, refresh,
+    view,
+    model: relationships,
+    highlighted,
+    open: openAgent,
+    hover: setHoveredAgent,
+    register,
+    refresh,
   };
   const renderWorkspace = (reference: WorkspaceRef, indent: number) => (
     <RelationshipWorkspace key={reference.key} reference={reference} indent={indent} sidebar={sidebar} onMenu={openWorkspaceMenu} />
@@ -922,12 +934,21 @@ function GroupsList(view: PluginSidebarViewProps) {
         <View style={{ flex: 1 }}>
           <ToolbarRow view={view} byRelation={byRelation} setByRelation={switchMode}
             onCreateGroup={() => { switchMode(false); createGroup(); }} />
-          <View ref={viewportRef} {...drag.surfaceHandlers} style={{ flex: 1 }}>
+          <View
+            ref={viewportRef}
+            {...drag.surfaceHandlers}
+            onLayout={(event) => onViewportHeight(event.nativeEvent.layout.height)}
+            style={{ flex: 1 }}
+          >
             <ScrollView
               ref={scrollRef}
               scrollEnabled={!drag.scrollLocked}
               scrollEventThrottle={16}
-              onScroll={(event) => drag.controller.onScroll(event.nativeEvent.contentOffset.y)}
+              onScroll={(event) => {
+                const y = event.nativeEvent.contentOffset.y;
+                drag.controller.onScroll(y);
+                onRailScroll(y);
+              }}
               onContentSizeChange={(_width, height) => { drag.controller.onContentHeight(height); refresh(); }}
               contentContainerStyle={{ paddingBottom: 24 }}
             >
